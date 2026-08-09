@@ -23,17 +23,16 @@ agent monitors completion, handles failures, and verifies binaries.
 
 ## Phase 0 — Shared preflight (~5 min)
 
-- [ ] **M0.1 Toolchain & resources**
-  - Verify Xcode Command Line Tools: `xcode-select -p`
-  - Verify Homebrew is installed
-  - Check free disk space (need ~40–60 GB; MongoDB build is the heavy one)
-  - Record CPU count (`sysctl -n hw.ncpu`) for `-j` splits
-- [ ] **M0.2 Resolve latest stable tags (no clone needed)**
-  - `git ls-remote --tags https://github.com/MariaDB/server.git` → newest `mariadb-11.8.x`
-  - `git ls-remote --tags https://github.com/mongodb/mongo.git` → newest `r8.0.x`
-    (8.0 still uses SCons; 8.1+/master moved to Bazel — avoid on macOS)
+- [x] **M0.1 Toolchain & resources**
+  - Xcode CLT: `/Applications/Xcode.app/Contents/Developer` ✓
+  - Homebrew 6.0.15 ✓
+  - Disk: 1.2Ti free of 1.8Ti — ample ✓
+  - CPU count: 14 cores → 7 per track
+- [x] **M0.2 Resolve latest stable tags (no clone needed)**
+  - MariaDB → **`mariadb-11.8.8`**
+  - MongoDB → **`r8.0.28`**
 
-**Exit criteria:** toolchain present, tags pinned, enough disk.
+**Exit criteria:** toolchain present, tags pinned, enough disk. ✅ Done 2026-08-09.
 
 ---
 
