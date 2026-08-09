@@ -66,17 +66,23 @@ agent monitors completion, handles failures, and verifies binaries.
 > no `select()` fallback, and that directory doesn't exist in the public clone.
 > Bisected the 8.0.x tag range: **SCons was removed in favor of Bazel between
 > `r8.0.15` (SCons, last one) and `r8.0.18` (Bazel-only, same enterprise-module
-> blocker)**. Retargeting Track B to **`r8.0.15`** — still 8.0 LTS, still buildable
-> standalone.
+> blocker)**. `r8.0.15` itself turned out to be a *partial* migration state —
+> `src/third_party/murmurhash3/SConscript` (and likely others) had already been
+> deleted in favor of `BUILD.bazel` while the top-level `SConstruct` still
+> requires it. Bisected again: **`src/third_party/*/SConscript` files are fully
+> intact through `r8.0.12`, first missing (murmurhash3) at `r8.0.13`.**
+> Final retarget: **`r8.0.12`** — spot-checked 11 other third_party SConscripts
+> (wiredtiger, mozjs, boost, benchmark, fmt, pcre2, s2, zlib, snappy, tomcrypt,
+> gperftools) all present.
 
-- [x] **B1 Clone** ✅ retargeted to `r8.0.15` (checked out in existing `mongodb/` repo)
+- [x] **B1 Clone** ✅ retargeted to `r8.0.12` (checked out in existing `mongodb/` repo)
 - [x] **B2 Dependencies** ✅ `python@3.10` venv + `poetry==2.0.0` + `poetry install --no-root --sync`
   (had to pin `pip==23.3.2` in the venv — newer pip's PEP 517 legacy-build shim
-  errors with `KeyError: 'PEP517_BUILD_BACKEND'` against the old `zope-interface==5.0.0` sdist)
-- [ ] **B3 Configure check**
-  ```sh
-  python3 buildscripts/scons.py --help
-  ```
+  errors with `KeyError: 'PEP517_BUILD_BACKEND'` against the old `zope-interface==5.0.0` sdist).
+  Vendored `src/third_party/scons-4.9.1/` isn't checked into git at all — installed
+  PyPI `scons==4.9.1` into the venv and invoke `scons` directly instead of
+  `buildscripts/scons.py` (which only looks for the vendored copy).
+- [x] **B3 Configure check** ✅ `scons --dry-run` confirms clang/Xcode toolchain detection works
 - [ ] **B4 Build** — background job, ~1–3 hrs (the long pole)
   ```sh
   python3 buildscripts/scons.py install-mongod --disable-warnings-as-errors -j7
