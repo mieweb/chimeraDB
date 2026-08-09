@@ -65,19 +65,21 @@ agent monitors completion, handles failures, and verifies binaries.
 
 ### Track B: MongoDB (Agent B)
 
+> **Correction (2026-08-09):** the pinned tag `r8.0.28` builds with **Bazel**, not
+> SCons — `buildscripts/scons.py` no longer exists in this checkout, and there is no
+> `etc/pip/compile-requirements.txt`. The original plan's SCons assumption was wrong
+> for this patch release. Steps below reflect the actual `docs/building.md` flow.
+
 - [x] **B1 Clone** ✅ `mongodb/` cloned at `r8.0.28`
-- [x] **B2 Dependencies** ✅ `python@3.10` installed via brew (system had no 3.10); venv + pip install next
-- [ ] **B3 Configure check**
-  - Dry-run `buildscripts/scons.py --help` to validate toolchain detection.
+- [x] **B2 Dependencies** ✅ `llvm@19`/`lld@19` via brew (Bazel toolchain, not a Python venv — no compile-requirements.txt in this version)
+- [x] **B3 Configure check** ✅ bazelisk installed → `~/.local/bin/bazel`; resolved to `bazel 7.5.0-mongo_9ea3a8ad9f`
 - [ ] **B4 Build** — background job, ~1–3 hrs (the long pole)
   ```sh
-  python buildscripts/scons.py install-mongod --release \
-    --linker=auto -j <half-of-cores>
+  bazel build install-mongod --disable_warnings_as_errors=True
   ```
-  Add `--disable-warnings-as-errors` if newer Xcode/clang trips warnings.
 - [ ] **B5 Verify**
   ```sh
-  build/install/bin/mongod --version
+  bazel-bin/install/bin/mongod --version
   ```
 
 **Exit criteria:** `mongod` binary reports the pinned version.
