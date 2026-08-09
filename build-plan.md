@@ -89,6 +89,16 @@ agent monitors completion, handles failures, and verifies binaries.
   ```
   Note: background job got SIGTTIN-suspended once when stdin was inherited from the
   terminal — relaunched with `< /dev/null` and `python3 -u` to stay detached and unbuffered.
+
+  > **Correction (2026-08-09):** Build failed ~1/3 through with a genuine compile error
+  > in vendored `src/third_party/boost/boost/thread/future.hpp:4672`:
+  > `error: no member named 'that' in 'run_it<FutureExecutorContinuationSharedState>'`.
+  > Inspecting the surrounding move-assignment operator showed every other member access
+  > in the same struct uses `that_` (the real member name) — this one instance is a
+  > plain upstream typo in this vendored Boost snapshot that newer/stricter clang
+  > (Xcode 26.3) no longer tolerates. Fixed with a one-line patch (`x.that` → `x.that_`)
+  > directly in the vendored header, then relaunched the same `scons install-mongod`
+  > command (incremental — resumed past the fixed object file without a clean rebuild).
 - [ ] **B5 Verify**
   ```sh
   build/install/bin/mongod --version
