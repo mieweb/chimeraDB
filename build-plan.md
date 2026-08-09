@@ -41,10 +41,7 @@ agent monitors completion, handles failures, and verifies binaries.
 ### Track A: MariaDB (Agent A)
 
 - [x] **A1 Clone** ✅ `mariadb-server/` cloned at `mariadb-11.8.8`
-- [ ] **A2 Dependencies**
-  ```sh
-  brew install cmake ninja openssl@3 bison gnutls fmt pcre2
-  ```
+- [x] **A2 Dependencies** ✅ cmake, ninja, openssl@3, bison, gnutls, fmt, pcre2 installed via brew
   Note: macOS system bison is too old — prepend `$(brew --prefix bison)/bin` to `PATH`.
 - [ ] **A3 Configure** (out-of-tree; skip heavy optional engines)
   ```sh
@@ -69,12 +66,7 @@ agent monitors completion, handles failures, and verifies binaries.
 ### Track B: MongoDB (Agent B)
 
 - [x] **B1 Clone** ✅ `mongodb/` cloned at `r8.0.28`
-- [ ] **B2 Dependencies**
-  - Python 3.10 virtualenv (8.0 is picky about Python version):
-    ```sh
-    python3.10 -m venv .venv && source .venv/bin/activate
-    pip install -r etc/pip/compile-requirements.txt
-    ```
+- [x] **B2 Dependencies** ✅ `python@3.10` installed via brew (system had no 3.10); venv + pip install next
 - [ ] **B3 Configure check**
   - Dry-run `buildscripts/scons.py --help` to validate toolchain detection.
 - [ ] **B4 Build** — background job, ~1–3 hrs (the long pole)
