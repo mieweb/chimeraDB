@@ -40,13 +40,7 @@ agent monitors completion, handles failures, and verifies binaries.
 
 ### Track A: MariaDB (Agent A)
 
-- [ ] **A1 Clone**
-  ```sh
-  git clone --depth 1 --branch <mariadb-11.8.x> \
-    https://github.com/MariaDB/server.git mariadb-server
-  cd mariadb-server
-  git submodule update --init --depth 1
-  ```
+- [x] **A1 Clone** ✅ `mariadb-server/` cloned at `mariadb-11.8.8`
 - [ ] **A2 Dependencies**
   ```sh
   brew install cmake ninja openssl@3 bison gnutls fmt pcre2
@@ -74,11 +68,7 @@ agent monitors completion, handles failures, and verifies binaries.
 
 ### Track B: MongoDB (Agent B)
 
-- [ ] **B1 Clone**
-  ```sh
-  git clone --depth 1 --branch <r8.0.x> \
-    https://github.com/mongodb/mongo.git mongodb
-  ```
+- [x] **B1 Clone** ✅ `mongodb/` cloned at `r8.0.28`
 - [ ] **B2 Dependencies**
   - Python 3.10 virtualenv (8.0 is picky about Python version):
     ```sh
