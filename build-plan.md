@@ -44,15 +44,17 @@ agent monitors completion, handles failures, and verifies binaries.
 - [x] **A2 Dependencies** ✅ cmake, ninja, openssl@3, bison, gnutls, fmt, pcre2 installed via brew
   Note: macOS system bison is too old — prepend `$(brew --prefix bison)/bin` to `PATH`.
 - [x] **A3 Configure** (out-of-tree; skip heavy optional engines) ✅ CMake+Ninja configure succeeded; OpenSSL, CURL, Curses found
-- [ ] **A4 Build** — background job, ~20–45 min on Apple Silicon
+- [x] **A4 Build** ✅ completed 2026-08-09, 2012/2012 targets, background job (`-j7`)
   ```sh
   cmake --build build -j <half-of-cores>
   ```
-- [ ] **A5 Verify**
+- [x] **A5 Verify** ✅ `mariadbd Ver 11.8.8-MariaDB for osx10.21 on arm64`; `mariadb from 11.8.8-MariaDB, client 15.2`
   ```sh
   build/sql/mariadbd --version
   build/client/mariadb --version
   ```
+
+**Track A status: COMPLETE ✅ (2026-08-09)**
 
 **Exit criteria:** `mariadbd` and `mariadb` client binaries report the pinned version.
 
