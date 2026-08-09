@@ -99,6 +99,18 @@ agent monitors completion, handles failures, and verifies binaries.
   > (Xcode 26.3) no longer tolerates. Fixed with a one-line patch (`x.that` → `x.that_`)
   > directly in the vendored header, then relaunched the same `scons install-mongod`
   > command (incremental — resumed past the fixed object file without a clean rebuild).
+
+  > **Correction (2026-08-09) #2:** Build failed again further along, this time in vendored
+  > `src/third_party/zlib/zutil.c` — clang errored while parsing macOS SDK's `_stdio.h`
+  > declaration of `fdopen`, because `zutil.h`'s classic-Mac-OS compatibility shim
+  > (`#if defined(MACOS) || defined(TARGET_OS_MAC)` → `#define fdopen(fd,mode) NULL`)
+  > wrongly matches modern macOS: `TARGET_OS_MAC` is defined on **all** Apple platforms
+  > (including real Darwin/macOS), not just pre-OS X "Classic" Mac OS. The macro then
+  > textually corrupts the system header's own `fdopen` declaration. Fixed by excluding
+  > real Darwin via the compiler-predefined `__MACH__` macro (present on all Darwin/macOS,
+  > never defined on classic Mac OS): condition changed to
+  > `defined(MACOS) || (defined(TARGET_OS_MAC) && !defined(__MACH__))`. Relaunched the
+  > same incremental `scons install-mongod` command again.
 - [ ] **B5 Verify**
   ```sh
   build/install/bin/mongod --version
