@@ -83,10 +83,12 @@ agent monitors completion, handles failures, and verifies binaries.
   PyPI `scons==4.9.1` into the venv and invoke `scons` directly instead of
   `buildscripts/scons.py` (which only looks for the vendored copy).
 - [x] **B3 Configure check** ✅ `scons --dry-run` confirms clang/Xcode toolchain detection works
-- [ ] **B4 Build** — background job, ~1–3 hrs (the long pole)
+- [~] **B4 Build** — background job, ~1–3 hrs (the long pole); launched 2026-08-09, in progress
   ```sh
-  python3 buildscripts/scons.py install-mongod --disable-warnings-as-errors -j7
+  scons install-mongod --disable-warnings-as-errors -j7
   ```
+  Note: background job got SIGTTIN-suspended once when stdin was inherited from the
+  terminal — relaunched with `< /dev/null` and `python3 -u` to stay detached and unbuffered.
 - [ ] **B5 Verify**
   ```sh
   build/install/bin/mongod --version
