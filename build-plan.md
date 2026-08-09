@@ -43,14 +43,7 @@ agent monitors completion, handles failures, and verifies binaries.
 - [x] **A1 Clone** ✅ `mariadb-server/` cloned at `mariadb-11.8.8`
 - [x] **A2 Dependencies** ✅ cmake, ninja, openssl@3, bison, gnutls, fmt, pcre2 installed via brew
   Note: macOS system bison is too old — prepend `$(brew --prefix bison)/bin` to `PATH`.
-- [ ] **A3 Configure** (out-of-tree; skip heavy optional engines)
-  ```sh
-  cmake -B build -G Ninja \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-    -DPLUGIN_COLUMNSTORE=NO \
-    -DPLUGIN_ROCKSDB=NO \
-    -DWITH_SSL=$(brew --prefix openssl@3)
-  ```
+- [x] **A3 Configure** (out-of-tree; skip heavy optional engines) ✅ CMake+Ninja configure succeeded; OpenSSL, CURL, Curses found
 - [ ] **A4 Build** — background job, ~20–45 min on Apple Silicon
   ```sh
   cmake --build build -j <half-of-cores>
