@@ -58,24 +58,33 @@ agent monitors completion, handles failures, and verifies binaries.
 
 ### Track B: MongoDB (Agent B)
 
-> **Correction (2026-08-09):** the pinned tag `r8.0.28` builds with **Bazel**, not
-> SCons — `buildscripts/scons.py` no longer exists in this checkout, and there is no
-> `etc/pip/compile-requirements.txt`. The original plan's SCons assumption was wrong
-> for this patch release. Steps below reflect the actual `docs/building.md` flow.
+> **Correction (2026-08-09):** the originally pinned `r8.0.28` requires MongoDB's
+> private/enterprise module even for a plain community build — `src/BUILD.bazel`
+> unconditionally references `//src/mongo/db/modules/enterprise/...` labels with
+> no `select()` fallback, and that directory doesn't exist in the public clone.
+> Bisected the 8.0.x tag range: **SCons was removed in favor of Bazel between
+> `r8.0.15` (SCons, last one) and `r8.0.18` (Bazel-only, same enterprise-module
+> blocker)**. Retargeting Track B to **`r8.0.15`** — still 8.0 LTS, still buildable
+> standalone.
 
-- [x] **B1 Clone** ✅ `mongodb/` cloned at `r8.0.28`
-- [x] **B2 Dependencies** ✅ `llvm@19`/`lld@19` via brew (Bazel toolchain, not a Python venv — no compile-requirements.txt in this version)
-- [x] **B3 Configure check** ✅ bazelisk installed → `~/.local/bin/bazel`; resolved to `bazel 7.5.0-mongo_9ea3a8ad9f`
+- [x] **B1 Clone** ✅ retargeted to `r8.0.15` (checked out in existing `mongodb/` repo)
+- [x] **B2 Dependencies** ✅ `python@3.10` venv + `poetry==2.0.0` + `poetry install --no-root --sync`
+  (had to pin `pip==23.3.2` in the venv — newer pip's PEP 517 legacy-build shim
+  errors with `KeyError: 'PEP517_BUILD_BACKEND'` against the old `zope-interface==5.0.0` sdist)
+- [ ] **B3 Configure check**
+  ```sh
+  python3 buildscripts/scons.py --help
+  ```
 - [ ] **B4 Build** — background job, ~1–3 hrs (the long pole)
   ```sh
-  bazel build install-mongod --disable_warnings_as_errors=True
+  python3 buildscripts/scons.py install-mongod --disable-warnings-as-errors -j7
   ```
 - [ ] **B5 Verify**
   ```sh
-  bazel-bin/install/bin/mongod --version
+  build/install/bin/mongod --version
   ```
 
-**Exit criteria:** `mongod` binary reports the pinned version.
+**Exit criteria:** `mongod` binary reports the pinned version (now `r8.0.15`).
 
 ---
 
