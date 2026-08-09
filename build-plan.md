@@ -154,6 +154,14 @@ Common failure modes:
   | `mariadbd` | `mariadb-server/build/sql/mariadbd` | `11.8.8-MariaDB` (`osx10.21`, arm64) | 23M |
   | `mariadb` (client) | `mariadb-server/build/client/mariadb` | client `15.2` | 5.1M |
   | `mongod` | `mongodb/build/install/bin/mongod` | `8.0.12` (`b3376e3af`, aarch64) | 244M |
+  | `mongo` (legacy shell client) | `mongodb/build/install/bin/mongo` | `8.0.12` | 80M |
+
+  Note: `mongo` is the legacy MongoDB shell — still buildable from this `r8.0.12` tree
+  (`src/mongo/shell/SConscript`, target `mongo`) via `scons install-mongo`. Since most
+  core libraries were already compiled for `mongod`, the extra `install-mongo` link-only
+  build was fast. MongoDB Inc. has since deprecated this binary from official packaging
+  in favor of `mongosh` (a separate Node.js-based project, not part of this source tree)
+  — for real-world use, prefer installing `mongosh` independently (e.g. `brew install mongosh`).
 
 - [x] Smoke test:
   - MariaDB: `mariadb-install-db` against a temp datadir failed with
@@ -166,6 +174,8 @@ Common failure modes:
   - MongoDB: ✅ started `mongod --dbpath <tmp> --port 27117`, confirmed
     `"msg":"mongod startup complete"` and `"Waiting for connections"` in the log,
     then cleanly stopped with `SIGTERM`. Full pass.
+  - `mongo` shell: ✅ `echo "print('smoke test ok'); quit()" | mongo --nodb --norc --quiet`
+    printed `smoke test ok`. Full pass.
 
 ## Risks
 
