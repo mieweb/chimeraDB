@@ -11,9 +11,11 @@ pass on **both**.
 
 > **Doc map (DRY):** [README.md](README.md) owns the *what & why* — product pitch,
 > architecture diagram, compatibility surface, licensing/trademark statement.
-> [build-plan.md](build-plan.md) owns the base-binary build recipes. This file owns the
+> [build-plan.md](build-plan.md) owns the base-binary build recipes.
+> [release-plan.md](release-plan.md) owns M9 — packaging, distribution, CI — and the tickets
+> for the M8 items that became projects of their own. This file owns the
 > *how & when* — engineering decisions, milestones, exit criteria — and does not restate
-> the other two. The `mongodb/` tree (r8.0.12) is used **only** as a test oracle and for
+> the others. The `mongodb/` tree (r8.0.12) is used **only** as a test oracle and for
 > its `mongo` shell client.
 
 ---
@@ -610,25 +612,14 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 - [ ] SCRAM-SHA-256 auth on the mongo listener (until then: localhost bind only)
 - [ ] Positional `$` update operator; `$elemMatch` completeness
 - [ ] Filter compile-to-SQL fast path (replace RMW scans; push predicates to generated-column indexes)
-- [ ] Vector search — **plugin-side MHNSW**, identical on both LTS versions (keeps rule 4):
-  per-index sibling InnoDB graph table (`layer, tref, vec, neighbors` — the same shape as
-  11.8's hidden `#i#01` hlindex) created and maintained by the translator through the
-  SQL-service choke point, in the **same transaction** as wire writes; raw-SQL writes
-  reconciled asynchronously by tailing the M5 oplog (= Atlas's consistency model).
-  Exposed as a `$vectorSearch`-shaped stage + `createIndexes {type:"vectorSearch"}`;
-  needs **no** server `VECTOR` type, parser, or optimizer support, so 10.11 works too.
-  Porting the GPLv2 algorithm from
-  [sql/vector_mhnsw.cc](mariadb-server/sql/vector_mhnsw.cc) is license-compatible
-  (rule 1 quarantines only `mongodb/`) — port the neighbor-selection heuristic for recall
-  parity. No differential oracle (community mongod lacks `$vectorSearch`) — golden-file
-  specs instead. Costs to size: SQL round-trips on cold search (plugin-side graph cache
-  mitigates), serialized inserts at the entry-point row.
-- [ ] `eager` projection mode automation (sampling + auto-ALTER policy)
 - [ ] mongodump/mongorestore compatibility pass
 - [ ] Strict type-mismatch mode (D8)
-- [ ] `chimerash` — dual-language REPL (client-side router: naked SQL → MySQL protocol, naked
-  mongosh → wire protocol; the no-server-fork answer to unquoted mongo syntax at a prompt)
 - [ ] Performance baseline + regression suite
+
+**Spun out** — three of these were projects, not backlog lines. They are ticket T1, T2 and T3
+in [release-plan.md](release-plan.md#tickets--three-m8-items-that-are-their-own-projects):
+vector search (plugin-side MHNSW), `chimerash` (the dual-language REPL), and `eager`
+projection automation. Each carries the decision it is blocked on rather than a scope.
 
 ---
 
