@@ -63,7 +63,7 @@ Not a formality. Three concrete things are macOS-only today:
   [build-server.sh](chimera/packaging/docker/build-server.sh) scripts the MariaDB build that
   [build-plan.md](build-plan.md) did by hand on macOS, with the storage engines ChimeraDB
   never loads switched off (1208 targets instead of ~4000).
-- [ ] **M9.0.3** Fix whatever M9.0.2 finds. Record each fix here as a correction note —
+- [x] **M9.0.3** Fix whatever M9.0.2 finds. Record each fix here as a correction note —
   divergences between the two platforms are the interesting output of this milestone.
 
   > **Correction 1 — `doctest` was an undeclared build dependency.** It reached the macOS
@@ -76,11 +76,40 @@ Not a formality. Three concrete things are macOS-only today:
   > on the other. Normalized in the test, not in `to_extjson`: the spacing is libbson's to
   > choose, JSON whitespace is insignificant, and a structure-blind collapse applied to real
   > documents would corrupt string values that contain two spaces.
+  >
+  > **Correction 3 — the ELF link never worked, exactly as the table above suspected.**
+  > MariaDB adds `-Wl,--no-undefined` to every non-storage-engine plugin on Linux
+  > ([cmake/plugin.cmake:254](mariadb-10.11/cmake/plugin.cmake#L254)), on the assumption that
+  > a plugin uses only the services ABI. ChimeraDB needs `current_thd`, `my_thread_init` and
+  > `my_thread_end`, which live in the `mariadbd` executable, so the first Linux link ever
+  > attempted failed with three undefined references. The flag is now dropped for this target
+  > alone — the mirror image of the `IF(APPLE)` dynamic-lookup line, saying the same thing to
+  > the other linker, and still with no server tree patched. It links, `mariadbd` loads it,
+  > and the Mongo listener comes up on Linux.
+  >
+  > **Correction 4 — the test oracle is a macOS binary, and that is what blocks the exit
+  > criteria.** Every layer that drives a mongo shell (`demo-m3`, `demo-oplog`,
+  > `demo-projection`'s wire half, `demo-gateways`, the differential suite) fails in the
+  > container with `Exec format error`. The shell is MongoDB 8.0.12 built from `mongodb/`,
+  > and the legacy `mongo` client has not shipped in an official tarball since 5.0, so there
+  > is nothing to download — a Linux oracle means building MongoDB inside the image.
+  > `mongosh` is not a substitute: the specs call `db.runCommand()` synchronously and mongosh
+  > returns promises. **This is the remaining work in M9.0 and a hard prerequisite for
+  > M9.6.1.**
+
+  What *is* proven on Debian 12 / arm64 against MariaDB 10.11.18 built by
+  [build-server.sh](chimera/packaging/docker/build-server.sh): hygiene, all 73 translator
+  unit tests, the plugin link *and load*, `probe-json`, and the SQL halves of `demo-m1` and
+  `demo-projection` — every D3, D8 and D10 assertion, identical to macOS.
 
 - [ ] **M9.0.4** Same on arm64 **and** amd64 (see M9.1 on why the arch matters this early).
+  arm64 done as far as Correction 4 allows; amd64 not attempted.
 
 **Exit criteria:** `test.sh` green for 10.11 and 11.8 inside a Debian container, on both
 architectures, with no source changes made outside `chimera/`.
+
+> **Status:** the last clause holds — every fix above landed inside `chimera/`. The rest is
+> gated on a Linux oracle build (Correction 4), after which 11.8 and amd64 are only compute.
 
 ---
 

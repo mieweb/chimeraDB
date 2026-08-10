@@ -66,11 +66,23 @@ IF(TARGET chimera_mongo)
   FILE(STRINGS "${CHIMERA_DIR}/VERSION" CHIMERA_VERSION LIMIT_COUNT 1)
   TARGET_COMPILE_DEFINITIONS(chimera_mongo PRIVATE CHIMERA_VERSION="${CHIMERA_VERSION}")
 
-  # mysys symbols (my_thread_init, my_thread_end) live in the mariadbd binary,
-  # not in any library a plugin can link. Apple's linker stopped implying
-  # dynamic lookup for bundles, so say it outright; dyld resolves them against
-  # the host executable at load time, exactly as it does on ELF platforms.
+  # mysys symbols (my_thread_init, my_thread_end) and current_thd live in the
+  # mariadbd binary, not in any library a plugin can link. Apple's linker stopped
+  # implying dynamic lookup for bundles, so say it outright; dyld resolves them
+  # against the host executable at load time.
+  #
+  # ELF needs the mirror image of the same statement. MariaDB adds
+  # -Wl,--no-undefined to every non-storage-engine plugin on Linux, on the
+  # assumption that a plugin only uses the services ABI — which is true right up
+  # until one needs current_thd. Dropping the flag for this target alone is how
+  # that is said without patching cmake/plugin.cmake (ground rule 2); mariadbd is
+  # linked with exported symbols, so the loader resolves them.
   IF(APPLE)
     TARGET_LINK_OPTIONS(chimera_mongo PRIVATE -Wl,-undefined,dynamic_lookup)
+  ELSE()
+    GET_TARGET_PROPERTY(CHIMERA_LINK_LIBRARIES chimera_mongo LINK_LIBRARIES)
+    LIST(REMOVE_ITEM CHIMERA_LINK_LIBRARIES "-Wl,--no-undefined")
+    SET_TARGET_PROPERTIES(chimera_mongo PROPERTIES
+      LINK_LIBRARIES "${CHIMERA_LINK_LIBRARIES}")
   ENDIF()
 ENDIF()
