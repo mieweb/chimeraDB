@@ -5,8 +5,9 @@
 **Goal:** A MongoDB-compatible document store implemented *inside* MariaDB — single storage
 engine (InnoDB), single transaction domain — good enough to run a Meteor.js app
 (oplog tailing included), with documents auto-projected into relational columns.
-**Server targets:** MariaDB **10.11 (LTS)** and **11.8 (LTS)** — every milestone's exit
-criteria must pass on **both**.
+**Server targets:** MariaDB **10.11.18 (LTS)** and **11.8.8 (LTS)** — both already built and
+verified locally (see [build-plan.md](build-plan.md)); every milestone's exit criteria must
+pass on **both**.
 
 > **Doc map (DRY):** [README.md](README.md) owns the *what & why* — product pitch,
 > architecture diagram, compatibility surface, licensing/trademark statement.
@@ -53,9 +54,9 @@ maps each component in that diagram to where it gets built:
    The mongodb tree is a *black-box* test oracle and client binary only. Implement the wire
    protocol from public documentation and observed behavior (FerretDB proved cleanroom
    viability). A CI check greps `chimera/` for `mongodb/src` includes — it must stay empty.
-2. **Zero upstream patches:** nothing inside `mariadb-server*/` trees may be edited except
-   a regenerable symlink into `plugin/`. If a server patch ever seems necessary, **stop and
-   escalate** — that changes the maintainability story.
+2. **Zero upstream patches:** nothing inside the `mariadb-server/` (11.8) or `mariadb-10.11/`
+   trees may be edited except a regenerable symlink into `plugin/`. If a server patch ever
+   seems necessary, **stop and escalate** — that changes the maintainability story.
 3. **Script-first:** every build/run/test action is a script in `chimera/scripts/` that CI
    and humans invoke identically.
 4. **Dual-version always:** every script takes `--server 10.11|11.8`; every milestone exit
@@ -73,7 +74,7 @@ chimeraSQL/
 ├── build-plan.md               # how the base binaries were built (done)
 ├── chimeraDB-plan.md           # this file: how & when
 ├── mariadb-server/             # 11.8.8 tree + build/ (gitignored)
-├── mariadb-server-10.11/       # 10.11.x tree + build/ (gitignored)
+├── mariadb-10.11/              # 10.11.18 tree + build/ (gitignored)
 ├── mongodb/                    # r8.0.12 — ORACLE + mongo shell ONLY (gitignored)
 └── chimera/
     ├── README.md               # folder anchor: what lives here and why
@@ -103,28 +104,51 @@ Dev port conventions (so everything can run simultaneously):
 
 **Goal:** both MariaDB versions build and run via scripts; `chimera/` skeleton exists.
 
+> **As-built (2026-08-10):** both server binaries already exist and are verified — see
+> [build-plan.md](build-plan.md) Track A (11.8) and Track A2 (10.11). M0.3/M0.4 are done;
+> what remains for M0 is the installed layout, the run scripts, and the `chimera/` skeleton.
+>
+> | Server | Tree | Binary | Version |
+> |---|---|---|---|
+> | 11.8 LTS | `mariadb-server/` | `mariadb-server/build/sql/mariadbd` | `11.8.8-MariaDB` (client `15.2`) |
+> | 10.11 LTS | `mariadb-10.11/` | `mariadb-10.11/build/sql/mariadbd` | `10.11.18-MariaDB` (client `15.1`) |
+> | oracle | `mongodb/` | `mongodb/build/install/bin/mongod` + `bin/mongo` | `8.0.12` |
+
 - [ ] **M0.1** Create the `chimera/` directory skeleton above with a `README.md` explaining
   the folder's organizing principle (one paragraph per subdirectory).
-- [ ] **M0.2** Add `mariadb-server-10.11/` to [.gitignore](.gitignore) (same pattern as the
-  existing trees).
-- [ ] **M0.3** Normalize the 10.11 checkout into its own tree so both versions coexist
-  (skip if already done — a 10.11 build is currently in progress):
+- [x] **M0.2** ✅ `/mariadb-10.11/` added to [.gitignore](.gitignore) alongside the other clones.
+- [x] **M0.3** ✅ 10.11 lives in its own **shallow clone** `mariadb-10.11/` at tag
+  `mariadb-10.11.18` (a `git worktree` off `mariadb-server/` isn't possible — that clone is
+  `--depth 1` and has no 10.11 history). Submodules initialized `--depth 1`.
+  Configured and built with the identical Track A recipe (built clean on the first try,
+  1947/1947 targets, no source patches):
   ```sh
-  cd mariadb-server && git worktree add ../mariadb-server-10.11 mariadb-10.11
+  export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+  export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
+  export PATH="$(brew --prefix bison)/bin:$PATH"
+  cd mariadb-10.11 && cmake -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DPLUGIN_COLUMNSTORE=NO -DPLUGIN_ROCKSDB=NO \
+    -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3) \
+    -DWITH_SSL=$(brew --prefix openssl@3) \
+    -DCMAKE_OSX_SYSROOT="$SDKROOT" \
+    -DLIBXML2_INCLUDE_DIR="$SDKROOT/usr/include/libxml2" \
+    -DZLIB_INCLUDE_DIR="$SDKROOT/usr/include"
+  cmake --build build -j12
   ```
-  Configure/build with the *same recipe and SDK lessons* as
-  [build-plan.md](build-plan.md) Track A (explicit `SDKROOT`, brew bison first in PATH,
-  `-DPLUGIN_COLUMNSTORE=NO -DPLUGIN_ROCKSDB=NO`).
-- [ ] **M0.4** Verify both trees report the right versions:
+  The two explicit `*_INCLUDE_DIR` overrides matter: without them CMake injects a stale
+  Command Line Tools SDK include path that shadows libc++ headers (the failure documented
+  in [build-plan.md](build-plan.md) Track A).
+- [x] **M0.4** ✅ Both trees report the expected versions:
   ```sh
-  mariadb-server/build/sql/mariadbd --version         # 11.8.8
-  mariadb-server-10.11/build/sql/mariadbd --version   # 10.11.x
+  mariadb-server/build/sql/mariadbd --version   # 11.8.8-MariaDB for osx10.21 on arm64
+  mariadb-10.11/build/sql/mariadbd --version    # 10.11.18-MariaDB for osx10.21 on arm64
   ```
 - [ ] **M0.5** Create an installed layout for each tree (needed for `mariadb-install-db`,
   plugin dirs, and mtr later — this is the gap that blocked the earlier smoke test):
   ```sh
   cmake --install mariadb-server/build --prefix "$PWD/mariadb-server/dist"
-  cmake --install mariadb-server-10.11/build --prefix "$PWD/mariadb-server-10.11/dist"
+  cmake --install mariadb-10.11/build --prefix "$PWD/mariadb-10.11/dist"
   ```
 - [ ] **M0.6** Write `chimera/scripts/run-server.sh --server 10.11|11.8 [--fresh]` and
   `stop-server.sh`: init datadir with `mariadb-install-db` on first run, start `mariadbd`
@@ -138,11 +162,14 @@ Dev port conventions (so everything can run simultaneously):
 - [ ] **M0.8** JSON feature probe on both servers (via `mariadb` client against each):
   `SELECT JSON_VALUE('{"a":{"b":2}}','$.a.b');` returns `2`;
   `CREATE TEMPORARY TABLE t (d JSON, v INT AS (JSON_VALUE(d,'$.x')) VIRTUAL);` succeeds.
-- [ ] **M0.9** Verify the plugin precedents exist in **both** trees (they anchor M3):
+- [x] **M0.9** ✅ Plugin precedents confirmed present in **both** trees:
   `plugin/daemon_example/`, `plugin/handler_socket/`, `plugin/test_sql_service/`.
 
 **Exit criteria:**
 - [ ] `run-server.sh --server 11.8` and `--server 10.11` start clean servers; probe SQL passes on both; skeleton committed.
+
+**Status:** binaries ready (M0.2–M0.4, M0.9 ✅); remaining work is install layouts (M0.5),
+scripts (M0.6), driver install (M0.7), JSON probe (M0.8), and the `chimera/` skeleton (M0.1).
 
 ---
 
@@ -245,7 +272,7 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
   server tree's `plugin/` (server CMake auto-discovers subdirectories) and re-runs cmake:
   ```sh
   ln -sfn "$PWD/chimera/plugin/chimera_mongo" mariadb-server/plugin/chimera_mongo
-  ln -sfn "$PWD/chimera/plugin/chimera_mongo" mariadb-server-10.11/plugin/chimera_mongo
+  ln -sfn "$PWD/chimera/plugin/chimera_mongo" mariadb-10.11/plugin/chimera_mongo
   ```
   This symlink is the **only** thing that ever touches the server trees (rule 2).
   Expect the plugin to need `#if MYSQL_VERSION_ID` guards for 10.11 vs 11.8 API drift —
