@@ -142,6 +142,7 @@ vite.config.ts.timestamp-*
 /mariadb-server/
 /mariadb-10.11/
 /mongodb/
+/go-mysql-server/
 
 # chimera runtime state (datadirs, pidfiles, logs) and out-of-tree build output
 /chimera/.run/
