@@ -147,32 +147,44 @@ Dev port conventions (so everything can run simultaneously):
   mariadb-server/build/sql/mariadbd --version   # 11.8.8-MariaDB for osx10.21 on arm64
   mariadb-10.11/build/sql/mariadbd --version    # 10.11.18-MariaDB for osx10.21 on arm64
   ```
-- [ ] **M0.5** Create an installed layout for each tree (needed for `mariadb-install-db`,
+- [x] **M0.5** ✅ Installed layout created for each tree (needed for `mariadb-install-db`,
   plugin dirs, and mtr later — this is the gap that blocked the earlier smoke test):
   ```sh
   cmake --install mariadb-server/build --prefix "$PWD/mariadb-server/dist"
   cmake --install mariadb-10.11/build --prefix "$PWD/mariadb-10.11/dist"
   ```
-- [ ] **M0.6** Write `chimera/scripts/run-server.sh --server 10.11|11.8 [--fresh]` and
-  `stop-server.sh`: init datadir with `mariadb-install-db` on first run, start `mariadbd`
-  with the port conventions above, pidfile under `chimera/.run/`. Never hardcode paths —
-  derive from `--server`.
-- [ ] **M0.7** Install the Apache-2.0 BSON/Mongo C libraries used by the translator:
+  Both `dist/bin/mariadbd` report the expected versions; `dist/scripts/mariadb-install-db`
+  and `dist/lib/plugin/` now exist. (`dist/` is inside the already-gitignored clones.)
+- [x] **M0.6** ✅ [chimera/scripts/run-server.sh](chimera/scripts/run-server.sh)
+  `--server 10.11|11.8 [--fresh] [--plugin-load-add <name>]` and
+  [stop-server.sh](chimera/scripts/stop-server.sh): init datadir with `mariadb-install-db`
+  on first run, start `mariadbd` with the port conventions above, pidfile/socket/errlog under
+  `chimera/.run/<version>/`. All paths derive from `--server` via
+  [_common.sh](chimera/scripts/_common.sh), the one place server paths and ports are defined.
+- [x] **M0.7** ✅ Apache-2.0 BSON/Mongo C libraries installed:
   ```sh
-  brew install mongo-c-driver
-  pkg-config --list-all | grep -iE 'bson|mongoc'   # note the pkg names (1.x: libbson-1.0; 2.x: bson2)
+  brew install mongo-c-driver     # 2.4.0
+  pkg-config --list-all | grep -iE 'bson|mongoc'
   ```
-- [ ] **M0.8** JSON feature probe on both servers (via `mariadb` client against each):
+  > **Correction (2026-08-10):** brew now ships mongo-c-driver **2.x**, so the pkg-config
+  > names are **`bson2`** / **`mongoc2`** (not the 1.x `libbson-1.0` / `libmongoc-1.0`).
+  > `pkg-config --cflags --libs bson2` → `-I…/include/bson-2.4.0 -lbson2`. Two consequences:
+  > M2.1's CMake must probe `bson2` first and fall back to `libbson-1.0`, and **Milestone 0.5
+  > (the optional CONNECT↔mongod sandbox) is blocked** — CONNECT's MONGO table type requires
+  > libmongoc-**1.0** at configure time. `pkg-config` also needs
+  > `PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig` on this machine.
+- [x] **M0.8** ✅ JSON feature probe scripted as
+  [chimera/scripts/probe-json.sh](chimera/scripts/probe-json.sh) and green on both servers:
   `SELECT JSON_VALUE('{"a":{"b":2}}','$.a.b');` returns `2`;
-  `CREATE TEMPORARY TABLE t (d JSON, v INT AS (JSON_VALUE(d,'$.x')) VIRTUAL);` succeeds.
+  `CREATE TEMPORARY TABLE t (d JSON, v INT AS (JSON_VALUE(d,'$.x')) VIRTUAL);` succeeds and
+  the generated column reads back correctly.
 - [x] **M0.9** ✅ Plugin precedents confirmed present in **both** trees:
   `plugin/daemon_example/`, `plugin/handler_socket/`, `plugin/test_sql_service/`.
 
 **Exit criteria:**
-- [ ] `run-server.sh --server 11.8` and `--server 10.11` start clean servers; probe SQL passes on both; skeleton committed.
+- [x] ✅ `run-server.sh --server 11.8` and `--server 10.11` start clean servers; probe SQL passes on both; skeleton committed.
 
-**Status:** binaries ready (M0.2–M0.4, M0.9 ✅); remaining work is install layouts (M0.5),
-scripts (M0.6), driver install (M0.7), JSON probe (M0.8), and the `chimera/` skeleton (M0.1).
+**Status:** COMPLETE ✅ (2026-08-10) — 10.11 verified first, then 11.8.
 
 ---
 
@@ -185,6 +197,11 @@ ergonomics, and a future data-migration bridge. Skippable without affecting late
 > at configure time ([storage/connect/CMakeLists.txt#L341](mariadb-server/storage/connect/CMakeLists.txt#L341)).
 > If brew installed driver 2.x in M0.7, either install a 1.x driver alongside or skip this milestone.
 
+> **Correction (2026-08-10):** M0.7 installed mongo-c-driver **2.4.0**, so no `libmongoc-1.0`
+> exists on this machine and CONNECT's MONGO support cannot be configured without installing
+> a second, older driver. This milestone is **skipped** — it is explicitly optional and its
+> only deliverable was an ergonomics observation, not a dependency of any later milestone.
+
 - [ ] **M0.5.1** Reconfigure the 11.8 tree so CMake reports `CONNECT_MONGODB: ON`; rebuild the CONNECT plugin only.
 - [ ] **M0.5.2** Start the oracle mongod (port 27117) and seed a few documents via the built `mongo` shell.
 - [ ] **M0.5.3** In the 11.8 server: `INSTALL SONAME 'ha_connect';` then
@@ -194,7 +211,7 @@ ergonomics, and a future data-migration bridge. Skippable without affecting late
   how types map, what discovery gets wrong. These observations feed D4/D5 defaults.
 
 **Exit criteria:**
-- [ ] Findings paragraph committed (or milestone explicitly marked skipped here).
+- [x] ✅ Milestone explicitly **skipped** (see correction above); no findings paragraph owed.
 
 ---
 
