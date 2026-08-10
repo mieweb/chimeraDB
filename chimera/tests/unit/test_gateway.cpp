@@ -52,6 +52,20 @@ TEST_CASE("anything that is not plainly a read is refused") {
   CHECK_FALSE(is_read_only_statement("/* SELECT"));
 }
 
+TEST_CASE("only IPv4 loopback addresses count as loopback") {
+  CHECK(is_loopback_address("127.0.0.1"));
+  CHECK(is_loopback_address("127.0.0.53"));  // the whole /8 is loopback
+  CHECK(is_loopback_address("127.255.255.255"));
+  CHECK_FALSE(is_loopback_address("0.0.0.0"));
+  CHECK_FALSE(is_loopback_address("10.0.0.1"));
+  CHECK_FALSE(is_loopback_address("128.0.0.1"));
+  CHECK_FALSE(is_loopback_address("localhost"));  // the listener is IPv4-only
+  CHECK_FALSE(is_loopback_address("::1"));
+  CHECK_FALSE(is_loopback_address(""));
+  // An embedded NUL must not hide the tail of the string from the parser.
+  CHECK_FALSE(is_loopback_address(std::string_view("127.0.0.1\0evil", 14)));
+}
+
 TEST_CASE("a pasted find survives unquoted keys and single quotes") {
   const ShellCall call = parse_shell_call("db.users.find({name: 'ada', active: true})");
   CHECK(call.collection == "users");

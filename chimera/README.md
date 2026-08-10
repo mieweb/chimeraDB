@@ -78,9 +78,14 @@ the flag the library is refused — and because the refusal happens before its s
 variables register, `--chimera-mongo-port` then reads as an unknown variable and the server
 aborts startup entirely. A confusing cascade from one missing flag.
 
-`chimera_mongo_bind` defaults to `127.0.0.1` and both variables are `PLUGIN_VAR_READONLY`:
-there is no authentication on the Mongo port yet, so binding wide must be a deliberate act,
-and a listener cannot be moved out from under live connections.
+`chimera_mongo_bind` defaults to `127.0.0.1`, and every listener variable is
+`PLUGIN_VAR_READONLY` — a listener cannot be moved out from under live connections. There is
+no authentication on the Mongo port yet
+([#5](https://github.com/mieweb/chimeraDB/issues/5)), so loopback is **enforced**, not merely
+defaulted: a non-loopback `chimera_mongo_bind` refuses to start unless
+`chimera_mongo_insecure_bind=ON` is also set, the opt-in is logged loudly at startup, and
+`chimeraSql`/`$sql` are refused entirely on such a bind — an unauthenticated socket that can
+reach the SQL gateway can read the whole server, not just collection tables.
 
 Two build facts follow from living inside the server tree. MariaDB 10.11 compiles its whole
 tree as C++11, so the plugin target sets `CXX_STANDARD 17` on itself to link the translator.

@@ -1,8 +1,11 @@
 #include "chimera/sqlguard.h"
 
+#include <arpa/inet.h>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <string>
 
 namespace chimera {
 namespace {
@@ -53,6 +56,14 @@ bool is_read_only_statement(std::string_view statement) {
       "SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN"};
   const std::string keyword = leading_keyword(statement);
   return std::find(kReadOnly.begin(), kReadOnly.end(), keyword) != kReadOnly.end();
+}
+
+bool is_loopback_address(std::string_view address) {
+  // c_str() would silently truncate at an embedded NUL, hiding a suffix.
+  if (address.find('\0') != std::string_view::npos) return false;
+  struct in_addr parsed;
+  if (::inet_pton(AF_INET, std::string(address).c_str(), &parsed) != 1) return false;
+  return (ntohl(parsed.s_addr) >> 24) == 127;
 }
 
 }  // namespace chimera

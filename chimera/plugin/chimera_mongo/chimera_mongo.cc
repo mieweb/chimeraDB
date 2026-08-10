@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 
+#include "chimera/sqlguard.h"
 #include "listener.h"
 #include "oplog.h"
 #include "sqlgateway.h"
@@ -19,14 +20,23 @@ static unsigned int chimera_mongo_port_value = 0;
 static unsigned long long chimera_mongo_oplog_max_rows_value = 0;
 static unsigned long long chimera_mongo_oplog_max_age_value = 0;
 static char chimera_mongo_sql_writes_value = 0;
+static char chimera_mongo_insecure_bind_value = 0;
 static std::unique_ptr<chimera::OplogPruner> chimera_mongo_pruner;
 
-// Loopback by default and deliberately: there is no authentication yet, so a
-// wide bind would expose every document to the network (M3.4).
+// Loopback by default and, since #5 stage 1, enforced: init refuses a
+// non-loopback bind unless chimera_mongo_insecure_bind acknowledges the risk.
 static MYSQL_SYSVAR_STR(bind, chimera_mongo_bind_value,
                         PLUGIN_VAR_READONLY | PLUGIN_VAR_MEMALLOC,
                         "IPv4 address the MongoDB wire listener binds to",
                         nullptr, nullptr, "127.0.0.1");
+
+// A control the operator must defeat on purpose, not a default they can
+// silently override: without this, a non-loopback bind refuses to start,
+// because the listener authenticates nobody (issue #5, stage 1).
+static MYSQL_SYSVAR_BOOL(insecure_bind, chimera_mongo_insecure_bind_value,
+                         PLUGIN_VAR_READONLY,
+                         "Allow the unauthenticated MongoDB listener to bind a non-loopback address",
+                         nullptr, nullptr, 0);
 
 // run-server.sh always passes the port explicitly, because the two server
 // versions run side by side and must not collide. The default matches 11.8.
@@ -55,6 +65,7 @@ static MYSQL_SYSVAR_BOOL(sql_writes, chimera_mongo_sql_writes_value, 0,
 
 static struct st_mysql_sys_var *chimera_mongo_system_variables[] = {
   MYSQL_SYSVAR(bind),
+  MYSQL_SYSVAR(insecure_bind),
   MYSQL_SYSVAR(port),
   MYSQL_SYSVAR(oplog_max_rows),
   MYSQL_SYSVAR(oplog_max_age_seconds),
@@ -64,11 +75,35 @@ static struct st_mysql_sys_var *chimera_mongo_system_variables[] = {
 
 static int chimera_mongo_init(void *p)
 {
+  const char *bind_address =
+      chimera_mongo_bind_value ? chimera_mongo_bind_value : "127.0.0.1";
+  const bool exposed = !chimera::is_loopback_address(bind_address);
+  if (exposed)
+  {
+    if (!chimera_mongo_insecure_bind_value)
+    {
+      fprintf(stderr,
+              "chimera_mongo: refusing to start: chimera_mongo_bind=%s is not a "
+              "loopback address and the listener has no authentication "
+              "(https://github.com/mieweb/chimeraDB/issues/5). Set "
+              "chimera_mongo_insecure_bind=ON only if every host that can reach "
+              "the port is trusted with every document.\n",
+              bind_address);
+      return 1;
+    }
+    fprintf(stderr,
+            "chimera_mongo: WARNING: chimera_mongo_insecure_bind=ON — serving %s "
+            "WITHOUT AUTHENTICATION; anyone who can reach the port can read and "
+            "write every collection. chimeraSql and $sql are disabled on this "
+            "bind.\n",
+            bind_address);
+  }
+
   chimera::set_sql_gateway_write_flag(&chimera_mongo_sql_writes_value);
+  chimera::set_sql_gateway_network_exposed(exposed);
 
   auto listener = std::make_unique<chimera::Listener>(
-      chimera_mongo_bind_value ? chimera_mongo_bind_value : "127.0.0.1",
-      static_cast<uint16_t>(chimera_mongo_port_value));
+      bind_address, static_cast<uint16_t>(chimera_mongo_port_value));
 
   std::string error;
   if (!listener->start(&error))
@@ -78,7 +113,7 @@ static int chimera_mongo_init(void *p)
   }
 
   fprintf(stderr, "chimera_mongo: listening on %s:%u\n",
-          chimera_mongo_bind_value, chimera_mongo_port_value);
+          bind_address, chimera_mongo_port_value);
 
   chimera_mongo_pruner= std::make_unique<chimera::OplogPruner>(
       &chimera_mongo_oplog_max_rows_value, &chimera_mongo_oplog_max_age_value);

@@ -646,8 +646,10 @@ In order:
 Tracked independently of this order:
 
 - **SCRAM-SHA-256 auth — [#5](https://github.com/mieweb/chimeraDB/issues/5)**:
-  release-gating for any non-loopback deployment; until it lands, M9 enforces the
-  loopback bind rather than merely defaulting to it.
+  release-gating for any non-loopback deployment. Stage 1 (enforce rather than advise)
+  is done: a non-loopback bind refuses to start without `chimera_mongo_insecure_bind=ON`,
+  the opt-in is logged loudly, and `chimeraSql`/`$sql` are disabled on such a bind.
+  Stages 2 (SCRAM itself) and 3 (TLS) remain.
 - **Spun out as projects**, each blocked on its own decision rather than on engineering:
   vector search [#2](https://github.com/mieweb/chimeraDB/issues/2), `chimerash`
   [#3](https://github.com/mieweb/chimeraDB/issues/3), `eager` projection automation
