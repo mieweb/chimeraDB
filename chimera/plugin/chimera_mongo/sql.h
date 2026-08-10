@@ -14,8 +14,18 @@ namespace chimera {
 // that is all the server's local-connection protocol offers.
 using Row = std::vector<std::optional<std::string>>;
 
+// What the server says a column holds. Since every value crosses as bytes, this
+// is the only way a caller can put a number back where it came from as a number
+// rather than as its decimal spelling.
+enum class ColumnType { Text, Integer, Real, Bool };
+
+struct Column {
+  std::string name;
+  ColumnType type = ColumnType::Text;
+};
+
 struct ResultSet {
-  std::vector<std::string> columns;
+  std::vector<Column> columns;
   std::vector<Row> rows;
 };
 

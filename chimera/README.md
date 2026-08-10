@@ -149,4 +149,97 @@ Two behaviors worth knowing before you design a projection, both demonstrated by
 
 ---
 
+## Speaking the other language
+
+Each client can reach the other's dialect without leaving its own connection. Both routes
+are demonstrated end to end by [scripts/demo-gateways.sh](scripts/demo-gateways.sh).
+
+### SQL from a mongo client
+
+`chimeraSql` runs a statement and returns its rows as documents, one document per row, in an
+ordinary cursor — so a driver needs no special handling for it:
+
+```js
+db.runCommand({chimeraSql: "SELECT sku, qty FROM shop.parts WHERE qty < 5"})
+// { cursor: { firstBatch: [ { sku: "bolt", qty: 3 } ], id: 0, ns: "shop.$cmd.chimeraSql" }, ok: 1 }
+```
+
+The same statement can be the *source* of an aggregation, which is the useful form: SQL does
+the join, the pipeline does the reshaping.
+
+```js
+db.aggregate([
+  {$sql: "SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id"},
+  {$sort: {name: 1}},
+  {$limit: 10}
+])
+```
+
+`{$sql: …}` must be the first stage — it produces the documents, so there is nothing for it
+to read if a stage ran before it — and `$match` is not available after it. Filtering belongs
+in the `WHERE` clause, which is the reason to reach for the stage at all.
+
+Numbers come back as numbers and `NULL` comes back as `null`. `DECIMAL` is the deliberate
+exception: it arrives as a string, because turning it into a double would throw away the
+precision it was chosen for.
+
+**Writes are refused by default.** The Mongo port has no authentication yet, so a mongo
+client is only allowed to read:
+
+```js
+db.runCommand({chimeraSql: "DELETE FROM shop.parts"})
+// { ok: 0, code: 13, codeName: "Unauthorized",
+//   errmsg: "the SQL gateway is read-only; 'DELETE' needs SET GLOBAL chimera_mongo_sql_writes = ON" }
+```
+
+A DBA opens the door from the SQL side with `SET GLOBAL chimera_mongo_sql_writes = ON`. The
+refusal is enforced twice: a keyword whitelist, and the server's own
+`START TRANSACTION READ ONLY`. Neither alone is enough — a read-only transaction does not
+stop DDL, because `CREATE`/`DROP` commit implicitly before they run, and a keyword check
+cannot know what a view or a trigger does.
+
+### mongosh from a SQL client
+
+`mongo()` takes a statement copied straight out of a shell session:
+
+```sql
+CREATE FUNCTION mongo RETURNS STRING SONAME 'chimera_mongo.so';   -- once per datadir
+
+USE shop;
+SELECT mongo("db.parts.findOne({sku: 'bolt'})");
+SELECT mongo("db.parts.updateOne({sku: 'bolt'}, {$set: {qty: 11}})");
+SELECT mongo('shop', 'db.parts.countDocuments({})');              -- explicit database
+```
+
+The one-argument form uses the database you are already `USE`-ing; the two-argument form
+names it. Supported verbs: `find`, `findOne`, `insertOne`, `insertMany`, `updateOne`,
+`updateMany`, `replaceOne`, `deleteOne`, `deleteMany`, `countDocuments`, `aggregate`.
+The second argument of `find`/`findOne` is a projection; sorting and paging are
+`aggregate`'s job here, because a chained `.sort()` is a method call and this is a gateway,
+not a JavaScript engine.
+
+The result is Extended JSON: an array for `find`/`aggregate` (the whole result — the cursor
+is drained, because a SQL caller has no way to ask for the rest), a document or `null` for
+`findOne`, a plain number for `countDocuments`, and the command's own reply for a write. A
+failed write raises a SQL error rather than returning a document that says it failed.
+
+Every verb is turned into the same command document a driver would have sent and dispatched
+through the same handlers, so a write from here takes the same locks and produces the same
+single oplog entry. The gateway adds a spelling, not a second implementation.
+
+**Quoting.** Arguments accept either quote style, which is what makes both of these work:
+
+| `sql_mode` | Write it as |
+|---|---|
+| default | `mongo("db.parts.find({sku: 'bolt'})")` |
+| `ANSI_QUOTES` | `mongo('db.parts.find({sku: "bolt"})')` |
+
+Under `ANSI_QUOTES` the double-quoted outer form is an *identifier* to the SQL parser and
+fails before `mongo()` ever runs. That is the server's rule, not ChimeraDB's, and it fails
+loudly rather than half-working. Naked, unquoted mongo syntax at the SQL prompt would
+require forking the server's parser, which ground rule 2 forbids — the string wrapper is the
+supported form.
+
+---
+
 Milestone plan and the decisions behind all of this: [chimeraDB-plan.md](../chimeraDB-plan.md).

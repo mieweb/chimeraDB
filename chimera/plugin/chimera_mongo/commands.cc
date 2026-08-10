@@ -13,6 +13,7 @@
 #include "collection.h"
 #include "cursor.h"
 #include "oplog.h"
+#include "sqlgateway.h"
 
 namespace chimera {
 namespace {
@@ -458,21 +459,44 @@ Bson cmd_count(Ctx& ctx) {
   return reply;
 }
 
+// `{$sql: "SELECT …"}` is a source stage: it produces the documents the rest of
+// the pipeline reshapes, so it only makes sense first — there is nothing for it
+// to read if a stage ran before it. Filtering belongs in its WHERE clause, which
+// is the entire reason to reach for it, so the stages after it are the
+// post-filter set and `$match` is not among them.
+std::vector<Bson> take_sql_source(Ctx& ctx, std::vector<Bson>& stages) {
+  if (stages.empty()) return {};
+  const auto [name, body] = stage_operator(stages.front().get());
+  if (name != "$sql") return {};
+  if (body.type() != BSON_TYPE_UTF8) throw type_mismatch("$sql takes a statement string");
+  const std::string statement(body.get().value.v_utf8.str, body.get().value.v_utf8.len);
+  stages.erase(stages.begin());
+  return run_sql_gateway(ctx.sql(), statement).documents;
+}
+
 Bson cmd_aggregate(Ctx& ctx) {
   bson_t pipeline;
   sub_document(ctx, "pipeline", &pipeline);
-  Pipeline plan = split_pipeline(&pipeline);
+  std::vector<Bson> stages = pipeline_stages(&pipeline);
 
-  const Namespace ns = ctx.ns();
-  Collection collection(ctx.sql(), ns);
   std::vector<Bson> documents;
-  // As with `find`, a collection that was never created aggregates to nothing.
-  if (collection.exists()) {
-    documents = run_stages(collection.load(plan.prefilter.get()), plan.stages);
+  std::string ns_text;
+  if (!stages.empty() && stage_operator(stages.front().get()).first == "$sql") {
+    // A `$sql` pipeline never touches a collection, so it runs against the
+    // database rather than a namespace and the cursor is named accordingly.
+    documents = run_stages(take_sql_source(ctx, stages), stages);
+    ns_text = ctx.db + ".$cmd.aggregate";
   } else {
+    Pipeline plan = split_pipeline(std::move(stages));
+    const Namespace ns = ctx.ns();
+    ns_text = ns.text();
+    Collection collection(ctx.sql(), ns);
+    // As with `find`, a collection that was never created aggregates to nothing.
     // The stages still run: `$count` and a `$group` on a constant key have
     // answers over an empty input, and a client is entitled to them.
-    documents = run_stages({}, plan.stages);
+    documents = run_stages(
+        collection.exists() ? collection.load(plan.prefilter.get()) : std::vector<Bson>{},
+        plan.stages);
   }
 
   const int64_t batch_size = number(ctx.body, "batchSize", kDefaultBatchSize);
@@ -484,8 +508,22 @@ Bson cmd_aggregate(Ctx& ctx) {
   documents.erase(documents.begin(), documents.begin() + take);
 
   const int64_t cursor_id =
-      documents.empty() ? 0 : CursorRegistry::instance().open(ns.text(), std::move(documents));
-  return cursor_reply(cursor_id, ns.text(), "firstBatch", first);
+      documents.empty() ? 0 : CursorRegistry::instance().open(ns_text, std::move(documents));
+  return cursor_reply(cursor_id, ns_text, "firstBatch", first);
+}
+
+// The plain form: `db.runCommand({chimeraSql: "SELECT …"})`. Rows come back in a
+// cursor like any other read, so a driver needs no special handling; a statement
+// that returned no result set reports how many rows it changed instead.
+Bson cmd_chimera_sql(Ctx& ctx) {
+  SqlGatewayResult result = run_sql_gateway(ctx.sql(), ctx.argument);
+  if (!result.had_result_set) {
+    Bson reply;
+    BSON_APPEND_INT64(reply.get(), "n", static_cast<int64_t>(result.affected_rows));
+    BSON_APPEND_DOUBLE(reply.get(), "ok", 1);
+    return reply;
+  }
+  return cursor_reply(0, ctx.db + ".$cmd.chimeraSql", "firstBatch", result.documents);
 }
 
 Bson cmd_distinct(Ctx& ctx) {
@@ -1025,6 +1063,7 @@ Bson dispatch_command(const wire::Request& req, ConnectionState& state) noexcept
     if (command == "count") return cmd_count(ctx);
     if (command == "aggregate") return cmd_aggregate(ctx);
     if (command == "distinct") return cmd_distinct(ctx);
+    if (command == "chimeraSql") return cmd_chimera_sql(ctx);
 
     if (command == "insert") return cmd_insert(ctx);
     if (command == "update") return cmd_update(ctx);

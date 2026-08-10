@@ -39,6 +39,11 @@ note "=== oplog and projections on $SERVER_VERSION ==="
 "$CHIMERA_DIR/scripts/demo-oplog.sh" --server "$SERVER_VERSION"
 "$CHIMERA_DIR/scripts/demo-projection.sh" --server "$SERVER_VERSION"
 
+# Each client speaking the other's language, and a write from the SQL side
+# arriving in the oplog exactly as a driver's would.
+note "=== cross-language gateways on $SERVER_VERSION ==="
+"$CHIMERA_DIR/scripts/demo-gateways.sh" --server "$SERVER_VERSION"
+
 # The referee: every command surface is replayed against a real mongod and the
 # two transcripts must be identical.
 note "=== differential vs MongoDB on $SERVER_VERSION ==="

@@ -20,6 +20,31 @@ constexpr unsigned kErrBadDb = 1049;
 
 MYSQL* as_mysql(void* handle) { return static_cast<MYSQL*>(handle); }
 
+// Enough of the server's type zoo to answer "is this a number?". Anything not
+// listed is handed on as text, which is always a truthful answer even when a
+// richer one exists.
+ColumnType column_type_of(const MYSQL_FIELD& field) {
+  switch (field.type) {
+    case MYSQL_TYPE_TINY:
+      // TINYINT(1) is how the server spells a boolean, and how chimera's own
+      // `is_unique` catalog column is declared.
+      return field.length == 1 ? ColumnType::Bool : ColumnType::Integer;
+    case MYSQL_TYPE_SHORT:
+    case MYSQL_TYPE_INT24:
+    case MYSQL_TYPE_LONG:
+    case MYSQL_TYPE_LONGLONG:
+    case MYSQL_TYPE_YEAR:
+      return ColumnType::Integer;
+    case MYSQL_TYPE_FLOAT:
+    case MYSQL_TYPE_DOUBLE:
+      return ColumnType::Real;
+    default:
+      // DECIMAL lands here deliberately: turning it into a double would lose
+      // the precision it was chosen for.
+      return ColumnType::Text;
+  }
+}
+
 // Server error numbers carry meaning the mongo client needs; anything we do not
 // map deliberately surfaces as InternalError with the server's own text, which
 // is more useful than a guessed mongo code.
@@ -87,7 +112,9 @@ ResultSet SqlSession::query(const std::string& sql) {
   const unsigned field_count = mysql_num_fields(res);
   MYSQL_FIELD* fields = mysql_fetch_fields(res);
   out.columns.reserve(field_count);
-  for (unsigned i = 0; i < field_count; ++i) out.columns.emplace_back(fields[i].name);
+  for (unsigned i = 0; i < field_count; ++i) {
+    out.columns.push_back(Column{fields[i].name, column_type_of(fields[i])});
+  }
 
   while (MYSQL_ROW row = mysql_fetch_row(res)) {
     unsigned long* lengths = mysql_fetch_lengths(res);

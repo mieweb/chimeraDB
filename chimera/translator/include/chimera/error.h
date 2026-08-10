@@ -28,6 +28,9 @@ TranslatorError failed_to_parse(const std::string& message);
 TranslatorError missing_command_field(const std::string& message);
 TranslatorError type_mismatch(const std::string& message);
 TranslatorError not_implemented(const std::string& message);
+// The request was understood and refused. Used by the SQL gateway when a
+// statement would write and writes have not been enabled.
+TranslatorError unauthorized(const std::string& message);
 TranslatorError namespace_not_found(const std::string& message);
 TranslatorError namespace_exists(const std::string& message);
 TranslatorError index_not_found(const std::string& message);

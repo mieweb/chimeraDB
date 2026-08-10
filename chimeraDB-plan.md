@@ -536,10 +536,10 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 
 **Goal:** the cross-language paths promised in [README § One prompt, both languages](README.md#one-prompt-both-languages).
 
-- [ ] **M7.1** SQL from mongo clients: admin command `{chimeraSql: "SELECT …"}` (and a
+- [x] **M7.1** SQL from mongo clients: admin command `{chimeraSql: "SELECT …"}` (and a
   `$sql` aggregation stage alias) returning rows as BSON documents. Read-only by default;
   a system variable gates write statements.
-- [ ] **M7.2** Verbatim mongosh from SQL clients: a `mongo('<statement>')` gateway (loadable
+- [x] **M7.2** Verbatim mongosh from SQL clients: a `mongo('<statement>')` gateway (loadable
   function linking the translator) that accepts a pasted shell statement —
   `db.<coll>.<verb>(<relaxed-JSON args>)` — for `find`/`findOne`/`insertOne`/`insertMany`/
   `updateOne`/`updateMany`/`replaceOne`/`deleteOne`/`deleteMany`/`countDocuments`/`aggregate`.
@@ -552,10 +552,47 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
   (Naked, unquoted mongo syntax at the SQL prompt would
   require forking the server parser — ground rule 2 forbids it. The string wrapper is the
   supported form; `chimerash` in M8 is the native-REPL answer.)
-- [ ] **M7.3** Document both with copy-paste examples in `chimera/README.md`.
+- [x] **M7.3** Document both with copy-paste examples in `chimera/README.md`.
+
+> **Correction (2026-02-14, M7.1 — read-only is enforced twice, and neither half is
+> redundant):** the keyword whitelist and `START TRANSACTION READ ONLY` catch different
+> things. A read-only transaction does not stop DDL, because `CREATE`/`DROP` commit
+> implicitly *before* they run and so never become part of the transaction; a keyword check
+> cannot know what a view or a trigger does once the statement is underway. `WITH` is
+> deliberately absent from the whitelist — MariaDB allows a CTE in front of `UPDATE` and
+> `DELETE`, so the first keyword stops being evidence. The check lives in the translator
+> (`sqlguard.cpp`) rather than the plugin precisely so a security control can be
+> unit-tested without a server.
+
+> **Correction (2026-02-14, M7.1 — `$sql` is a source, not a filter):** `{$sql: …}` may only
+> be the first stage, because it produces the documents the rest of the pipeline reshapes,
+> and `$match` is not available after it. Filtering belongs in the `WHERE` clause, which is
+> the reason to reach for the stage at all. Values come back typed — integers as integers,
+> `NULL` as `null` — with `DECIMAL` deliberately arriving as a string, since a double would
+> discard the precision it was declared for.
+
+> **Correction (2026-02-14, M7.2 — the gateway is a spelling, not a second engine):** the
+> plan said "loadable function linking the translator", which suggested a library of its own.
+> It ships inside `chimera_mongo.so` instead (`CREATE FUNCTION mongo RETURNS STRING SONAME
+> 'chimera_mongo.so'`), and it does not reimplement any verb: each one becomes the command
+> document a driver would have sent and goes through `dispatch_command`. That is what makes
+> a `mongo('db.c.updateOne(…)')` produce exactly one oplog entry, identical to the wire's —
+> which the demo asserts rather than assumes. Cursors are drained before returning, because
+> a SQL caller has no way to ask for the next batch and stopping at 101 documents would be a
+> silent truncation.
+
+> **Correction (2026-02-14, M7.2 — finding the caller's database):** `mongo('<statement>')`
+> uses the database the session is already `USE`-ing, which needs `current_thd` and
+> therefore `#define MYSQL_SERVER` — the header exposure is confined to
+> `mongogateway_udf.cc`, which contains no logic and no BSON. The two-argument form
+> `mongo('<db>', '<statement>')` exists for callers with no current database.
+> `find`/`findOne` take a projection as their second argument; sorting and paging are
+> `aggregate`'s job, because a chained `.sort()` is a method call and this is a gateway, not
+> a JavaScript engine. `ObjectId('…')` is understood; `ISODate` and friends raise rather
+> than guess.
 
 **Exit criteria:**
-- [ ] Both examples work on both versions; docs updated.
+- [x] Both examples work on both versions; docs updated.
 
 ---
 

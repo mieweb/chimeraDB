@@ -10,34 +10,10 @@
 namespace chimera {
 namespace {
 
-// The stage document is always a one-field document: {$match: {...}}.
-std::pair<std::string, Value> only_stage(const bson_t* stage) {
-  auto fields = document_fields(stage);
-  if (fields.size() != 1) {
-    throw failed_to_parse("a pipeline stage specification object must contain exactly one field");
-  }
-  return fields.front();
-}
-
 bson_t view_of(const Value& value) {
   bson_t doc;
   bson_init_static(&doc, value.get().value.v_doc.data, value.get().value.v_doc.data_len);
   return doc;
-}
-
-// A BSON array is a document keyed "0","1",… so the pipeline reads like one.
-std::vector<Bson> pipeline_stages(const bson_t* pipeline) {
-  std::vector<Bson> stages;
-  if (pipeline == nullptr) return stages;
-  for (const auto& [index, element] : document_fields(pipeline)) {
-    (void)index;
-    if (element.type() != BSON_TYPE_DOCUMENT) {
-      throw type_mismatch("each element of the aggregate pipeline must be a document");
-    }
-    bson_t view = view_of(element);
-    stages.push_back(Bson::copy_of(&view));
-  }
-  return stages;
 }
 
 // `$sum: 1` counts, `$sum: "$field"` adds. A field path that is missing or
@@ -132,14 +108,39 @@ int64_t positive_count(const Value& value, const char* stage) {
 
 }  // namespace
 
+std::pair<std::string, Value> stage_operator(const bson_t* stage) {
+  auto fields = document_fields(stage);
+  if (fields.size() != 1) {
+    throw failed_to_parse("a pipeline stage specification object must contain exactly one field");
+  }
+  return fields.front();
+}
+
+std::vector<Bson> pipeline_stages(const bson_t* pipeline) {
+  std::vector<Bson> stages;
+  if (pipeline == nullptr) return stages;
+  for (const auto& [index, element] : document_fields(pipeline)) {
+    (void)index;
+    if (element.type() != BSON_TYPE_DOCUMENT) {
+      throw type_mismatch("each element of the aggregate pipeline must be a document");
+    }
+    bson_t view = view_of(element);
+    stages.push_back(Bson::copy_of(&view));
+  }
+  return stages;
+}
+
 Pipeline split_pipeline(const bson_t* pipeline) {
+  return split_pipeline(pipeline_stages(pipeline));
+}
+
+Pipeline split_pipeline(std::vector<Bson> stages) {
   Pipeline result;
-  std::vector<Bson> stages = pipeline_stages(pipeline);
 
   std::vector<Bson> matches;
   size_t index = 0;
   for (; index < stages.size(); ++index) {
-    const auto [name, body] = only_stage(stages[index].get());
+    const auto [name, body] = stage_operator(stages[index].get());
     if (name != "$match") break;
     if (body.type() != BSON_TYPE_DOCUMENT) throw type_mismatch("$match takes a query document");
     bson_t view = view_of(body);
@@ -165,7 +166,7 @@ Pipeline split_pipeline(const bson_t* pipeline) {
 
 std::vector<Bson> run_stages(std::vector<Bson> documents, const std::vector<Bson>& stages) {
   for (const auto& stage : stages) {
-    const auto [name, body] = only_stage(stage.get());
+    const auto [name, body] = stage_operator(stage.get());
 
     if (name == "$match") {
       // Reachable only after a reshaping stage, where there is no longer a `doc`

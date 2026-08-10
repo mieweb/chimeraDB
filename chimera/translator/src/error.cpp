@@ -12,6 +12,7 @@ TranslatorError type_mismatch(const std::string& message) { return {14, "TypeMis
 TranslatorError not_implemented(const std::string& message) {
   return {238, "NotImplemented", message};
 }
+TranslatorError unauthorized(const std::string& message) { return {13, "Unauthorized", message}; }
 TranslatorError namespace_not_found(const std::string& message) {
   return {26, "NamespaceNotFound", message};
 }

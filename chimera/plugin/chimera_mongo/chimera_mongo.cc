@@ -12,11 +12,13 @@
 
 #include "listener.h"
 #include "oplog.h"
+#include "sqlgateway.h"
 
 static char *chimera_mongo_bind_value = nullptr;
 static unsigned int chimera_mongo_port_value = 0;
 static unsigned long long chimera_mongo_oplog_max_rows_value = 0;
 static unsigned long long chimera_mongo_oplog_max_age_value = 0;
+static char chimera_mongo_sql_writes_value = 0;
 static std::unique_ptr<chimera::OplogPruner> chimera_mongo_pruner;
 
 // Loopback by default and deliberately: there is no authentication yet, so a
@@ -44,16 +46,26 @@ static MYSQL_SYSVAR_ULONGLONG(oplog_max_age_seconds, chimera_mongo_oplog_max_age
                               "Maximum oplog entry age in seconds (0 disables the limit)",
                               nullptr, nullptr, 86400, 0, ~0ULL, 1);
 
+// The SQL gateway lets a mongo client run SQL. Off for writes by default: a
+// mongo connection is not authenticated yet (M3.4), so anything it can reach
+// should be something it could already have read through a collection.
+static MYSQL_SYSVAR_BOOL(sql_writes, chimera_mongo_sql_writes_value, 0,
+                         "Allow chimeraSql and the $sql stage to run statements that write",
+                         nullptr, nullptr, 0);
+
 static struct st_mysql_sys_var *chimera_mongo_system_variables[] = {
   MYSQL_SYSVAR(bind),
   MYSQL_SYSVAR(port),
   MYSQL_SYSVAR(oplog_max_rows),
   MYSQL_SYSVAR(oplog_max_age_seconds),
+  MYSQL_SYSVAR(sql_writes),
   nullptr
 };
 
 static int chimera_mongo_init(void *p)
 {
+  chimera::set_sql_gateway_write_flag(&chimera_mongo_sql_writes_value);
+
   auto listener = std::make_unique<chimera::Listener>(
       chimera_mongo_bind_value ? chimera_mongo_bind_value : "127.0.0.1",
       static_cast<uint16_t>(chimera_mongo_port_value));
