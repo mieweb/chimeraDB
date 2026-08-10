@@ -140,4 +140,5 @@ vite.config.ts.timestamp-*
 
 # Source clones built per build-plan.md (own git history, not tracked here)
 /mariadb-server/
+/mariadb-10.11/
 /mongodb/

@@ -11,7 +11,7 @@
 | Versions | Latest stable release tags (MariaDB `mariadb-11.8.x` LTS, MongoDB `r8.0.x`) |
 | Clone depth | Shallow (`--depth 1`) |
 | Build type | Release/optimized (`RelWithDebInfo` for MariaDB, `--release` for MongoDB) |
-| Layout | `mariadb-server/` and `mongodb/` under the workspace root |
+| Layout | `mariadb-server/` (11.8), `mariadb-10.11/`, and `mongodb/` under the workspace root |
 
 ## Concurrency model
 
@@ -57,6 +57,19 @@ agent monitors completion, handles failures, and verifies binaries.
 **Track A status: COMPLETE ✅ (2026-08-09)**
 
 **Exit criteria:** `mariadbd` and `mariadb` client binaries report the pinned version.
+
+### Track A2: MariaDB 10.11 LTS (added 2026-08-10)
+
+Older LTS line kept alongside 11.8 for comparison (supported to Feb 2028).
+Same toolchain recipe as Track A — only the source tree differs.
+
+- [x] **A2.1 Clone** ✅ `mariadb-10.11/` at `mariadb-10.11.18` (latest 10.11 patch), submodules initialized
+- [x] **A2.2 Configure** ✅ same CMake+Ninja flags as A3 (SDK sysroot, brew OpenSSL/bison,
+  ColumnStore & RocksDB off, explicit `LIBXML2_INCLUDE_DIR`/`ZLIB_INCLUDE_DIR`)
+- [ ] **A2.3 Build** background job (`-j12`), log at `mariadb-10.11-build.log`
+- [ ] **A2.4 Verify** `build/sql/mariadbd --version`, `build/client/mariadb --version`
+
+**Exit criteria:** `mariadbd` reports `10.11.18-MariaDB`.
 
 ### Track B: MongoDB (Agent B)
 
