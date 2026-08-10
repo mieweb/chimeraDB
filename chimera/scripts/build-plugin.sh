@@ -14,7 +14,7 @@ chimera_parse_server "$@"
 "$CHIMERA_DIR/scripts/link-plugin.sh"
 
 [[ -d $SERVER_BUILD ]] || die "no build directory at $SERVER_BUILD"
-export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+chimera_export_pkg_config_path
 
 note "re-running cmake for $SERVER_VERSION so it picks up the new plugin directory"
 cmake "$SERVER_BUILD" >/dev/null

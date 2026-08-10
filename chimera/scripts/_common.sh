@@ -13,6 +13,15 @@ RUN_DIR="$CHIMERA_DIR/.run"
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 note() { printf '==> %s\n' "$*"; }
 
+# libbson is found through pkg-config. On Linux the system path already has it;
+# on macOS it only exists under the Homebrew prefix, which is not searched by
+# default.
+chimera_export_pkg_config_path() {
+  if command -v brew >/dev/null 2>&1; then
+    export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+  fi
+}
+
 # Consumes "--server <10.11|11.8>" from the argument list and leaves everything
 # else in CHIMERA_ARGS for the caller to parse. Sets the per-server variables.
 chimera_parse_server() {

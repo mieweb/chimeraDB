@@ -49,7 +49,7 @@ Not a formality. Three concrete things are macOS-only today:
 | [plugin CMakeLists](chimera/plugin/chimera_mongo/CMakeLists.txt) carries an `IF(APPLE)` dynamic-lookup link option for mysys symbols | The ELF path (symbols resolved from the `mariadbd` executable at load) is *assumed* to work and has never been observed to |
 | [_common.sh](chimera/scripts/_common.sh) locates servers as `$REPO_ROOT/mariadb-10.11` and `$REPO_ROOT/mariadb-server` with a `dist/` prefix | A packaged install has no source tree and no `dist/` |
 
-- [ ] **M9.0.1** Make the pkg-config path discovery portable: use `pkg-config` as found, and
+- [x] **M9.0.1** Make the pkg-config path discovery portable: use `pkg-config` as found, and
   only prepend a Homebrew prefix when `brew` exists. One change, both scripts, no new
   abstraction.
 - [ ] **M9.0.2** `chimera/packaging/docker/dev-debian.Dockerfile` — a Debian image with

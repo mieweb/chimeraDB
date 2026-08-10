@@ -18,7 +18,7 @@ done
 BUILD_DIR="$CHIMERA_DIR/translator/build"
 $clean && rm -rf "$BUILD_DIR"
 
-export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+chimera_export_pkg_config_path
 
 note "configuring translator"
 cmake -S "$CHIMERA_DIR/translator" -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
