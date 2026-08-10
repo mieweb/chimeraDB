@@ -8,62 +8,44 @@ engine (InnoDB), single transaction domain — good enough to run a Meteor.js ap
 **Server targets:** MariaDB **10.11 (LTS)** and **11.8 (LTS)** — every milestone's exit
 criteria must pass on **both**.
 
-> Prerequisites and build recipes live in [build-plan.md](build-plan.md) — do not duplicate
-> them here. The `mongodb/` tree (r8.0.12) is used **only** as a test oracle and for its
-> `mongo` shell client. The architecture rationale was settled in design discussion;
-> this file is the execution plan.
+> **Doc map (DRY):** [README.md](README.md) owns the *what & why* — product pitch,
+> architecture diagram, compatibility surface, licensing/trademark statement.
+> [build-plan.md](build-plan.md) owns the base-binary build recipes. This file owns the
+> *how & when* — engineering decisions, milestones, exit criteria — and does not restate
+> the other two. The `mongodb/` tree (r8.0.12) is used **only** as a test oracle and for
+> its `mongo` shell client.
 
 ---
 
-## Architecture (decided)
+## Architecture
 
-```mermaid
-graph TB
-    MongoClients["mongo shell / Meteor / Node driver<br/>(wire protocol)"]
-    SQLClients["mariadb client & DBA tools<br/>(MySQL protocol)"]
+The architecture diagram, the anatomy of a collection table, and the product positioning
+live in [README § What it is](README.md#what-it-is) — not restated here. The table below
+maps each component in that diagram to where it gets built:
 
-    subgraph MariaDBD ["mariadbd — one process, one transaction domain"]
-        WirePlugin["chimera_mongo daemon plugin<br/>OP_MSG listener + libbson"]
-        Translator["translator library<br/>BSON⇄extJSON · filter/update compiler"]
-        SQLGateway["UDF gateway<br/>mongo_find('db.coll','{…}')"]
-        SQLCore["SQL core (parser / optimizer)"]
-        Projector["projection manager<br/>manual | eager | lazy"]
-        OplogTable["chimera_oplog table<br/>(appended in same txn; triggers catch SQL writes)"]
-        InnoDB["InnoDB"]
-        DocTables["collection tables:<br/>_id PK · doc JSON · generated columns"]
-    end
-
-    MongoClients --> WirePlugin --> Translator
-    SQLClients --> SQLCore
-    SQLCore --> SQLGateway --> Translator
-    Translator --> SQLCore
-    SQLCore --> InnoDB
-    InnoDB --> DocTables
-    InnoDB --> OplogTable
-    Projector --> DocTables
-
-    %% fixed fill + explicit dark text so nodes stay readable in both light and dark themes
-    classDef head fill:#e8f0fe,stroke:#4285f4,color:#0b2a5b
-    classDef core fill:#e6f4ea,stroke:#34a853,color:#0d3d1e
-    classDef store fill:#fef7e0,stroke:#f9ab00,color:#5c3d00
-    class MongoClients,SQLClients,WirePlugin,SQLGateway head
-    class Translator,SQLCore,Projector core
-    class InnoDB,DocTables,OplogTable store
-```
+| Component (README diagram) | Source location | Built in |
+|---|---|---|
+| `chimera_mongo` daemon plugin — listener, commands, cursors | `chimera/plugin/chimera_mongo/` | M3 skeleton · M4 CRUD · M5 tailable cursors |
+| Translator — BSON⇄extJSON codec, `_id` canonicalization, filter/update compiler | `chimera/translator/` | M2 |
+| Doc-store conventions — collection tables, `chimera_meta` catalog | `chimera/sql/` | M1 |
+| Projection manager — `manual` today; `eager`/`lazy` knobs | `chimera/sql/` + plugin (`createIndexes`) | M1, M4 (automation: M8) |
+| Transactional oplog — same-txn append, triggers, pruning, tailable cursors | `chimera/sql/` + plugin | M5 |
+| Cross-language gateways — `mongo_find()` UDF, `chimeraSql`/`$sql` | plugin + translator | M7 |
+| Meteor acceptance harness | `chimera/tests/meteor/` | M6 |
 
 ### Locked decisions
 
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | One engine (InnoDB), two protocol heads | Only shape where doc+projection writes are atomic; mongod exposes no XA so dual-engine can never be transaction-safe |
-| D2 | Compatibility bar = **Meteor.js** | hello handshake as single-node replica set, CRUD subset, minimal aggregation, **oplog tailing** (`local.oplog.rs`, tailable+awaitData cursors). Change streams, `$where`, map-reduce, sharding: out of scope |
+| D2 | Compatibility bar = **Meteor.js** | Oplog tailing is the linchpin (hello presents a single-node replica set). The **authoritative** supported / not-supported command surface is the single table in [README § Compatibility](README.md#compatibility) — milestones implement exactly that list, nothing more |
 | D3 | Document is **source of truth**; projections are `GENERATED ALWAYS` columns | Engine-enforced: projection columns cannot drift. `ALTER … ADD COLUMN … AS (JSON_VALUE(doc,'$.path')) PERSISTENT` backfills natively (the ALTER rebuild *is* the scan) |
 | D4 | Projection mode per collection: `manual` (default) \| `eager` \| `lazy` | Manual = DBA issues ALTERs. Eager = auto-ALTER on new paths (later). Lazy = no physical columns, JSON_VALUE on demand |
 | D5 | Storage encoding = **MongoDB Extended JSON (canonical)** in a `JSON` column | MariaDB JSON is text; extJSON preserves BSON types (ObjectId, Date, Timestamp, Decimal128). libbson converts both directions for free |
 | D6 | Update execution = **read-modify-write** (doc locked `FOR UPDATE`, ops applied via libbson in memory, full doc written back) | KISS: correct for *all* update operators under InnoDB row locking. Compile-to-SQL is a later optimization, not a requirement |
 | D7 | Oplog = InnoDB table written **in the same transaction** as the mutation; triggers on collection tables catch raw-SQL writes | Transactional oplog (never shows rolled-back writes) — stronger than real MongoDB. In-process commit notification wakes tailing cursors |
 | D8 | Type-mismatch policy: permissive (`JSON_VALUE` → NULL + warning) by default; strict mode later | Matches MariaDB semantics; documented knob |
-| D9 | All chimera code is GPLv2, out-of-tree, in `chimera/` | Zero patches to either upstream; redistribution-clean (GPLv2 + Apache-2.0 libbson) |
+| D9 | All chimera code is GPLv2, out-of-tree, in `chimera/` | Zero patches to either upstream. Outbound licensing & trademark statement: [README § License & trademarks](README.md#license--trademarks) |
 
 ### Non-negotiable ground rules
 
@@ -87,8 +69,9 @@ graph TB
 
 ```
 chimeraSQL/
+├── README.md                   # product front page: what & why, quick start, compatibility
 ├── build-plan.md               # how the base binaries were built (done)
-├── chimeraDB-plan.md           # this file
+├── chimeraDB-plan.md           # this file: how & when
 ├── mariadb-server/             # 11.8.8 tree + build/ (gitignored)
 ├── mariadb-server-10.11/       # 10.11.x tree + build/ (gitignored)
 ├── mongodb/                    # r8.0.12 — ORACLE + mongo shell ONLY (gitignored)
@@ -364,14 +347,15 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
   export MONGO_URL="mongodb://127.0.0.1:27018/meteor"
   export MONGO_OPLOG_URL="mongodb://127.0.0.1:27018/local"
   ```
-- [ ] **M6.2** Fix the gap list until startup is clean (expected suspects: agg subset for
-  `countDocuments` → implement `aggregate` with `$match,$group,$sum,$count,$project,$sort,$limit,$skip`;
-  index creation calls; `getParameter`-style probes — stub honestly, never lie about features).
+- [ ] **M6.2** Fix the gap list until startup is clean (expected suspects: the aggregation
+  subset promised in [README § Compatibility](README.md#compatibility), needed by
+  `countDocuments`; index creation calls; `getParameter`-style probes — stub honestly,
+  never lie about features).
 - [ ] **M6.3** Reactivity check: two browsers on the app; a todo added in one appears in the
   other **without refresh**, and chimera logs show an active tailable cursor on
   `local.oplog.rs` (i.e., oplog driver, not poll-and-diff fallback).
-- [ ] **M6.4** The chimera party trick: `INSERT` a todo via the **`mariadb` client** —
-  it appears live in both browsers (trigger → oplog → DDP).
+- [ ] **M6.4** The README's headline party trick: `INSERT` a todo via the **`mariadb`
+  client** — it appears live in both browsers (trigger → oplog → DDP).
 - [ ] **M6.5** Repeat M6.3/M6.4 on the 10.11 build.
 
 **Exit criteria:**
