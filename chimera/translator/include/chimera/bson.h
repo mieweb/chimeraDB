@@ -74,7 +74,7 @@ Bson path_set(const bson_t* doc, const Path& path, const bson_value_t& value);
 Bson path_unset(const bson_t* doc, const Path& path);
 
 // BSON arrays are documents keyed "0","1",… — these two hide that.
-std::vector<Value> array_elements(const bson_value_t& array);
+std::vector<Value> array_values(const bson_value_t& array);
 Bson make_array(const std::vector<Value>& elements);
 
 // Iterate a document as (key, value) pairs, in document order.

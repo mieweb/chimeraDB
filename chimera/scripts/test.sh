@@ -17,9 +17,20 @@ note "=== hygiene (repo-wide) ==="
 note "=== translator unit tests (server-independent) ==="
 "$CHIMERA_DIR/scripts/build-translator.sh"
 
+note "=== building the Mongo head for $SERVER_VERSION ==="
+"$CHIMERA_DIR/scripts/build-plugin.sh" --server "$SERVER_VERSION"
+
+# Restart so the tests exercise the plugin that was just built, not whatever
+# happened to be loaded before.
+"$CHIMERA_DIR/scripts/stop-server.sh" --server "$SERVER_VERSION" >/dev/null
+"$CHIMERA_DIR/scripts/run-server.sh" --server "$SERVER_VERSION" >/dev/null
+
 note "=== SQL layer on $SERVER_VERSION ==="
 chimera_require_running
 "$CHIMERA_DIR/scripts/probe-json.sh" --server "$SERVER_VERSION"
 "$CHIMERA_DIR/scripts/demo-m1.sh" --server "$SERVER_VERSION"
+
+note "=== Mongo wire protocol on $SERVER_VERSION ==="
+"$CHIMERA_DIR/scripts/demo-m3.sh" --server "$SERVER_VERSION"
 
 note "all layers green on $SERVER_VERSION"

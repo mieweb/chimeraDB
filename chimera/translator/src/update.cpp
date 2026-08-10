@@ -13,7 +13,7 @@ std::vector<Value> current_array(const bson_t* doc, const Path& path, const char
   if (existing->type() != BSON_TYPE_ARRAY) {
     throw type_mismatch(std::string(op) + " requires an array at '" + to_json_path(path) + "'");
   }
-  return array_elements(existing->get());
+  return array_values(existing->get());
 }
 
 // $push/$addToSet accept either a bare value or {$each: [...]}.
@@ -23,7 +23,7 @@ std::vector<Value> each_values(const bson_value_t& spec) {
     if (bson_init_static(&view, spec.value.v_doc.data, spec.value.v_doc.data_len)) {
       bson_iter_t it;
       if (bson_iter_init_find(&it, &view, "$each")) {
-        return array_elements(*bson_iter_value(&it));
+        return array_values(*bson_iter_value(&it));
       }
       for (const auto& field : document_fields(&view)) {
         if (!field.first.empty() && field.first[0] == '$') {

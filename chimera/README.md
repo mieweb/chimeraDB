@@ -60,6 +60,37 @@ reactively, oplog tailing and all.
 
 ---
 
+## Loading the Mongo head
+
+`run-server.sh` does this automatically once `build-plugin.sh --server <v>` has installed
+`chimera_mongo.so` into the server's `lib/plugin/`, but the flags are worth knowing:
+
+```sh
+mariadbd --plugin-maturity=experimental \
+         --plugin-load-add=chimera_mongo \
+         --chimera-mongo-bind=127.0.0.1 \
+         --chimera-mongo-port=27018
+```
+
+`--plugin-maturity=experimental` is **not optional**. The plugin honestly declares itself
+`MariaDB_PLUGIN_MATURITY_EXPERIMENTAL`, and mariadbd's default floor is `gamma`, so without
+the flag the library is refused — and because the refusal happens before its system
+variables register, `--chimera-mongo-port` then reads as an unknown variable and the server
+aborts startup entirely. A confusing cascade from one missing flag.
+
+`chimera_mongo_bind` defaults to `127.0.0.1` and both variables are `PLUGIN_VAR_READONLY`:
+there is no authentication on the Mongo port yet, so binding wide must be a deliberate act,
+and a listener cannot be moved out from under live connections.
+
+Two build facts follow from living inside the server tree. MariaDB 10.11 compiles its whole
+tree as C++11, so the plugin target sets `CXX_STANDARD 17` on itself to link the translator.
+And `my_global.h` defines a macro named `array_elements`, which will silently mangle any C++
+symbol of that name — the reason the translator's equivalent is called `array_values`, and a
+good reason to keep `chimera_mongo.cc` the only file in the plugin that includes MariaDB
+headers.
+
+---
+
 ## The storage model, exactly
 
 The [root README](../README.md#what-it-is) explains *why* a collection is a table. This is

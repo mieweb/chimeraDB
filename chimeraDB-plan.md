@@ -317,15 +317,15 @@ runs hygiene + unit tests + the SQL layer, green on 10.11 and 11.8.
 
 **Goal:** `mongo` shell connects to mariadbd and can `ping` — on both server versions.
 
-- [ ] **M3.1** Read the two in-tree precedents before writing code:
+- [x] **M3.1** Read the two in-tree precedents before writing code:
   [plugin/daemon_example](mariadb-server/plugin/daemon_example) (minimal daemon plugin
   lifecycle) and [plugin/handler_socket](mariadb-server/plugin/handler_socket) (a plugin
   running its own network listeners). Note how `st_maria_plugin` is declared, and how
   init/deinit manage threads.
-- [ ] **M3.2** Create `chimera/plugin/chimera_mongo/` with `CMakeLists.txt` using
+- [x] **M3.2** Create `chimera/plugin/chimera_mongo/` with `CMakeLists.txt` using
   `MYSQL_ADD_PLUGIN(chimera_mongo … MODULE_ONLY)`; declare `PLUGIN_LICENSE_GPL` and
   `MariaDB_PLUGIN_MATURITY_EXPERIMENTAL`. Link the translator static lib + libbson.
-- [ ] **M3.3** Write `chimera/scripts/link-plugin.sh` — symlinks the plugin dir into each
+- [x] **M3.3** Write `chimera/scripts/link-plugin.sh` — symlinks the plugin dir into each
   server tree's `plugin/` (server CMake auto-discovers subdirectories) and re-runs cmake:
   ```sh
   ln -sfn "$PWD/chimera/plugin/chimera_mongo" mariadb-server/plugin/chimera_mongo
@@ -334,28 +334,72 @@ runs hygiene + unit tests + the SQL layer, green on 10.11 and 11.8.
   This symlink is the **only** thing that ever touches the server trees (rule 2).
   Expect the plugin to need `#if MYSQL_VERSION_ID` guards for 10.11 vs 11.8 API drift —
   keep them few and commented.
-- [ ] **M3.4** Plugin skeleton: system variables `chimera_mongo_port` (defaults per port
+
+  > **Correction (2026-08-10):** no `#if MYSQL_VERSION_ID` guards were needed — the daemon
+  > plugin API is byte-identical between the two versions (`daemon_example` and
+  > `handler_socket` are literally the same files, and `st_maria_plugin` has the same 13
+  > fields). The version drift is in the **build**, not the API: 10.11 sets
+  > `CMAKE_CXX_STANDARD 11` tree-wide, so a plugin that links a C++17 static library fails
+  > to compile. The single accommodation is a per-target property in the plugin's
+  > `CMakeLists.txt`:
+  > ```cmake
+  > SET_TARGET_PROPERTIES(chimera_mongo PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+  > ```
+  > CMake emits `-std=gnu++17` after the tree-wide `-std=gnu++11`, and the last flag wins.
+  > No server file is touched.
+  >
+  > A second collision surfaced here: MariaDB's `my_global.h` defines a **macro**
+  > `array_elements(A)`, which silently mangles any C++ function of that name. The
+  > translator's `array_elements()` was renamed to `array_values()`. The lesson generalises —
+  > the plugin translation unit that includes MariaDB headers must be kept as thin as
+  > possible, and `chimera_mongo.cc` is the only file in the plugin that includes them.
+- [x] **M3.4** Plugin skeleton: system variables `chimera_mongo_port` (defaults per port
   table), `chimera_mongo_bind` (**default `127.0.0.1`** — no auth exists yet, never bind
   wide by default); listener thread started in plugin init, joined in deinit (server must
   shut down clean, no leaked threads).
-- [ ] **M3.5** Wire framing: implement **OP_MSG**, *plus* legacy **OP_QUERY only for the
+- [x] **M3.5** Wire framing: implement **OP_MSG**, *plus* legacy **OP_QUERY only for the
   initial `isMaster`/`hello` handshake* — drivers and the legacy shell send their first
   handshake as OP_QUERY before switching to OP_MSG. Reply with `OP_REPLY` for that one
   path. Everything else is OP_MSG-only.
-- [ ] **M3.6** Commands: `hello`/`isMaster` (present as single-node replica set:
+- [x] **M3.6** Commands: `hello`/`isMaster` (present as single-node replica set:
   `isWritablePrimary:true`, `setName:"chimera"`, `me`/`hosts`, `logicalSessionTimeoutMinutes:30`,
   `maxWireVersion:17`, `minWireVersion:0` — document why 17), `ping`, `buildInfo`,
   `endSessions` (accept + no-op), and a proper error envelope (`ok:0, code, codeName, errmsg`).
-- [ ] **M3.7** Manual verification with the built oracle shell against **both** servers:
+- [x] **M3.7** Manual verification with the built oracle shell against **both** servers:
   ```sh
   mongodb/build/install/bin/mongo --port 27018 --quiet --eval 'db.runCommand({ping:1})'
   mongodb/build/install/bin/mongo --port 27019 --quiet --eval 'db.runCommand({ping:1})'
   ```
-- [ ] **M3.8** `chimera/scripts/build-plugin.sh --server <v>` + extend `run-server.sh` to
+
+  > **Correction (2026-08-10):** "manual verification" violates ground rule 3, so this became
+  > `chimera/scripts/demo-m3.sh --server <v>` — seven asserted steps driving the oracle shell
+  > (handshake+`ping`, the `hello` replica-set shape, legacy OP_QUERY `isMaster`, `buildInfo`,
+  > `endSessions`, the `CommandNotFound` envelope *and* that the connection survives it, and
+  > clean shutdown with an idle client still attached). It is wired into `test.sh`, which now
+  > also builds the plugin and restarts the server so the tests exercise what was just built.
+- [x] **M3.8** `chimera/scripts/build-plugin.sh --server <v>` + extend `run-server.sh` to
   `INSTALL SONAME 'chimera_mongo'` (or `--plugin-load-add`) automatically.
 
+  > **Correction (2026-08-10):** `--plugin-load-add=chimera_mongo` alone is not enough.
+  > mariadbd defaults to `--plugin-maturity=gamma` and flatly refuses to open a plugin that
+  > declares itself experimental:
+  > ```
+  > Can't open shared library 'chimera_mongo.so' (errno: 1, Loading of experimental plugin
+  > chimera_mongo is prohibited by --plugin-maturity=gamma)
+  > ```
+  > Worse, the failure cascades: the plugin's system variables never register, so
+  > `--chimera-mongo-port` becomes an *unknown variable* and the server aborts startup
+  > entirely. `run-server.sh` therefore passes `--plugin-maturity=experimental` alongside the
+  > load flag. The maturity declaration stays `EXPERIMENTAL` — it is honest, and the server
+  > flag is the right place to opt in.
+
 **Exit criteria:**
-- [ ] Shell connects, `ping` and `hello` return well-formed replies on 10.11 **and** 11.8; clean server shutdown.
+- [x] Shell connects, `ping` and `hello` return well-formed replies on 10.11 **and** 11.8; clean server shutdown.
+
+**Status:** COMPLETE ✅ (2026-08-10) — `test.sh --server <v>` green end-to-end on both
+10.11 and 11.8: hygiene, 32 translator unit tests, plugin build, SQL layer, and `demo-m3.sh`.
+The real MongoDB shell completes a handshake against mariadbd on both versions and shuts the
+server down cleanly while connected.
 
 ---
 

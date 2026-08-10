@@ -286,7 +286,7 @@ Bson path_unset(const bson_t* doc, const Path& path) {
   return unset_in(doc, path, 0);
 }
 
-std::vector<Value> array_elements(const bson_value_t& array) {
+std::vector<Value> array_values(const bson_value_t& array) {
   if (array.value_type != BSON_TYPE_ARRAY) throw type_mismatch("expected an array");
   bson_t view;
   if (!bson_init_static(&view, array.value.v_doc.data, array.value.v_doc.data_len)) {

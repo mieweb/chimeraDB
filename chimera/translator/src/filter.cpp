@@ -71,7 +71,7 @@ private:
   }
 
   std::string compile_logical(const char* joiner, const bson_value_t& v) {
-    auto branches = array_elements(v);
+    auto branches = array_values(v);
     if (branches.empty()) throw failed_to_parse("logical operator requires a non-empty array");
     std::vector<std::string> parts;
     for (const auto& branch : branches) {
@@ -147,7 +147,7 @@ private:
   }
 
   std::string compile_in(const Path& path, const bson_value_t& v, bool negated) {
-    auto members = array_elements(v);
+    auto members = array_values(v);
     if (members.empty()) return negated ? "1" : "0";
     std::string list;
     for (size_t i = 0; i < members.size(); ++i) {
