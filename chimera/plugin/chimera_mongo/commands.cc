@@ -174,9 +174,11 @@ Bson hello_reply(const ServerIdentity& identity, int64_t connection_id) {
 Bson build_info_reply() {
   Bson reply;
   bson_t* b = reply.get();
-  // The version string is what drivers gate their feature checks on, so it has
-  // to match the wire version we advertise.
-  BSON_APPEND_UTF8(b, "version", "6.0.0");
+  // Two things at once. The 6.0.0 prefix is the wire version we advertise, so
+  // drivers gating on it get a true answer; the suffix means mongosh prints
+  // "Using MongoDB: 6.0.0-chimera-…" rather than claiming to be a MongoDB
+  // release this is not. It is valid semver, so a parser will not choke.
+  BSON_APPEND_UTF8(b, "version", "6.0.0-chimera-" CHIMERA_VERSION);
   bson_t array;
   BSON_APPEND_ARRAY_BEGIN(b, "versionArray", &array);
   BSON_APPEND_INT32(&array, "0", 6);
@@ -184,7 +186,7 @@ Bson build_info_reply() {
   BSON_APPEND_INT32(&array, "2", 0);
   BSON_APPEND_INT32(&array, "3", 0);
   bson_append_array_end(b, &array);
-  BSON_APPEND_UTF8(b, "gitVersion", "chimera");
+  BSON_APPEND_UTF8(b, "gitVersion", "chimera-" CHIMERA_VERSION);
   BSON_APPEND_UTF8(b, "sysInfo", "ChimeraDB on MariaDB");
   BSON_APPEND_INT32(b, "bits", 64);
   BSON_APPEND_BOOL(b, "debug", false);

@@ -253,12 +253,20 @@ Packaging without CI means release artifacts built by hand on one Mac.
 
 ## M9.7 — Version identity
 
-- [ ] **M9.7.1** There is no version number anywhere in `chimera/`. Add `chimera/VERSION`
+- [x] **M9.7.1** There is no version number anywhere in `chimera/`. Add `chimera/VERSION`
   (start at `0.1.0`) as the single source for package versions, formula, and image tags.
-- [ ] **M9.7.2** Decide what ChimeraDB reports to a driver in `buildInfo` — it is what
+- [x] **M9.7.2** Decide what ChimeraDB reports to a driver in `buildInfo` — it is what
   `mongosh` prints on connect. It must not claim to be a MongoDB version it is not, and it
   must not be so strange that drivers refuse it. This is the same "never lie in the
   handshake" rule the M6 stubs followed, applied to the string humans actually see.
+
+  > **`6.0.0-chimera-<VERSION>`.** It was a bare `6.0.0`, which is the one thing the rule
+  > forbids. The prefix is the wire version actually advertised (`maxWireVersion` 17), so a
+  > driver gating on it still gets a true answer; the suffix is valid semver prerelease, so
+  > version parsers accept it and it sorts *below* 6.0.0 rather than above — the safe
+  > direction to be wrong in. `gitVersion` follows as `chimera-<VERSION>`. Verified against
+  > both shells: `mongosh` prints `Using MongoDB: 6.0.0-chimera-0.1.0`, and the differential
+  > suite is unchanged at 8/8.
 - [ ] **M9.7.3** Package version encodes both: `0.1.0-mariadb11.8`.
 
 ---

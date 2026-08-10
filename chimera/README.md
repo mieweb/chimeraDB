@@ -16,6 +16,11 @@ The organizing principle: *one subdirectory per layer of the architecture diagra
 | [sql/](sql/) | The storage conventions |
 | [scripts/](scripts/) | Every action, replayable |
 | [tests/](tests/) | Proof, at three levels |
+| [packaging/](packaging/) | Reaching a machine that is not this one |
+
+[VERSION](VERSION) is the one loose file, and it is loose on purpose: it is the single
+version string, read by the plugin's `buildInfo`, by package names, by the formula and by
+image tags. Nothing else may hold a copy.
 
 ## `plugin/chimera_mongo/`
 

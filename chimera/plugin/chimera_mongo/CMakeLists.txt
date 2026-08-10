@@ -61,6 +61,11 @@ MYSQL_ADD_PLUGIN(chimera_mongo
 IF(TARGET chimera_mongo)
   SET_TARGET_PROPERTIES(chimera_mongo PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
+  # chimera/VERSION is the single source for this, for package versions, for the
+  # formula and for image tags.
+  FILE(STRINGS "${CHIMERA_DIR}/VERSION" CHIMERA_VERSION LIMIT_COUNT 1)
+  TARGET_COMPILE_DEFINITIONS(chimera_mongo PRIVATE CHIMERA_VERSION="${CHIMERA_VERSION}")
+
   # mysys symbols (my_thread_init, my_thread_end) live in the mariadbd binary,
   # not in any library a plugin can link. Apple's linker stopped implying
   # dynamic lookup for bundles, so say it outright; dyld resolves them against
