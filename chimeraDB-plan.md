@@ -609,7 +609,7 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 ## Milestone 8 — Hardening backlog *(explicitly out of scope for v1 — do not start without discussion)*
 
 - [ ] Wire-level transactions (`startTransaction`/`commitTransaction` → InnoDB txns — natural fit)
-- [ ] SCRAM-SHA-256 auth on the mongo listener (until then: localhost bind only)
+- [ ] SCRAM-SHA-256 auth on the mongo listener — tracked as [#5](https://github.com/mieweb/chimeraDB/issues/5) (until then: localhost bind only, and M9 must enforce it)
 - [ ] Positional `$` update operator; `$elemMatch` completeness
 - [ ] Filter compile-to-SQL fast path (replace RMW scans; push predicates to generated-column indexes)
 - [ ] mongodump/mongorestore compatibility pass

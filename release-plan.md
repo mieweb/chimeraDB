@@ -112,11 +112,12 @@ patches) is honored. A package build has no server tree.
   | `chimeradb` | all | Meta-package depending on `chimeradb-common` + the plugin matching the installed server — so `apt install chimeradb` from the README still works |
 - [ ] **M9.2.3** **Config drop-in** `/etc/mysql/mariadb.conf.d/60-chimera.cnf`:
   `plugin_load_add=chimera_mongo`, `chimera_mongo_port=27017`, and **`bind-address=127.0.0.1`
-  for the Mongo listener**. There is no authentication on that listener yet (it is still an
-  open M8 item), so a package that binds it to `0.0.0.0` ships an unauthenticated database
-  to the network. Localhost-only is not a default to be polite about — it is the security
-  control, and it must be impossible to get by accident. The package description and
-  `README` must say so in the same breath as the install command.
+  for the Mongo listener**. There is no authentication on that listener yet
+  ([#5](https://github.com/mieweb/chimeraDB/issues/5)), so a package that binds it to
+  `0.0.0.0` ships an unauthenticated database to the network. Localhost-only is not a default
+  to be polite about — it is the security control, and it must be impossible to get by
+  accident. The package description and `README` must say so in the same breath as the
+  install command.
 - [ ] **M9.2.4** **No clever maintainer scripts.** `postinst` cannot load SQL into a server
   that may not be running, may be remote, may need credentials. Ship `chimeradb setup`
   (loads the catalog/oplog SQL, creates the `mongo()` function) and have `postinst` print how
@@ -236,7 +237,7 @@ Packaging without CI means release artifacts built by hand on one Mac.
   either works verbatim or has been removed. `dnf` is removed unless someone builds it.
 - [ ] Artifacts are produced by CI from a tag, not by a human.
 - [ ] The Mongo listener is loopback-bound in every shipped default until authentication
-  exists.
+  exists ([#5](https://github.com/mieweb/chimeraDB/issues/5)).
 
 ---
 
