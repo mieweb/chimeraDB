@@ -22,6 +22,7 @@ add_library(chimera_translator STATIC
   src/error.cpp
   src/filter.cpp
   src/id.cpp
+  src/pipeline.cpp
   src/project.cpp
   src/sort.cpp
   src/update.cpp

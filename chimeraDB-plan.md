@@ -471,25 +471,64 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 
 **Goal:** a stock Meteor todos app runs reactively against chimera. This is the bar.
 
-- [ ] **M6.1** `chimera/tests/meteor/`: install Meteor, scaffold the standard todos example,
+- [x] **M6.1** `chimera/tests/meteor/`: install Meteor, scaffold the standard todos example,
   script `run-meteor.sh --server <v>` exporting:
   ```sh
   export MONGO_URL="mongodb://127.0.0.1:27018/meteor"
   export MONGO_OPLOG_URL="mongodb://127.0.0.1:27018/local"
   ```
-- [ ] **M6.2** Fix the gap list until startup is clean (expected suspects: the aggregation
+- [x] **M6.2** Fix the gap list until startup is clean (expected suspects: the aggregation
   subset promised in [README § Compatibility](README.md#compatibility), needed by
   `countDocuments`; index creation calls; `getParameter`-style probes — stub honestly,
   never lie about features).
-- [ ] **M6.3** Reactivity check: two browsers on the app; a todo added in one appears in the
+- [x] **M6.3** Reactivity check: two browsers on the app; a todo added in one appears in the
   other **without refresh**, and chimera logs show an active tailable cursor on
   `local.oplog.rs` (i.e., oplog driver, not poll-and-diff fallback).
-- [ ] **M6.4** The README's headline party trick: `INSERT` a todo via the **`mariadb`
+- [x] **M6.4** The README's headline party trick: `INSERT` a todo via the **`mariadb`
   client** — it appears live in both browsers (trigger → oplog → DDP).
-- [ ] **M6.5** Repeat M6.3/M6.4 on the 10.11 build.
+- [x] **M6.5** Repeat M6.3/M6.4 on the 10.11 build.
+
+> **Correction (2026-02-14, M6.2 — the bug a real driver found and the harness did not):**
+> chimera answered every write with `writeErrors: []`. mongod *omits* the field when a
+> batch succeeded, and the Node driver treats its presence as proof there is a first error:
+> it runs `new MongoServerError(res.writeErrors[0])` and dies on `undefined.message` before
+> the insert can return. Every Meteor boot crashed on its seed data. The array is now built
+> to one side and attached only when non-empty. Eight differential specs against a live
+> mongod never caught this — the transcripts compare *documents returned*, not reply shape,
+> so a field that is always present and always empty diffs clean. Acceptance tests earn
+> their keep on exactly this class of bug.
+
+> **Correction (2026-02-14, M6.2 — the aggregation split):** a pipeline is cut at its first
+> reshaping stage. Leading `$match`es merge into one `{$and: […]}` and compile to SQL; every
+> later stage runs in this process over documents already loaded. A `$match` *after* a
+> reshaping stage raises `not_implemented` rather than being pushed down (it would filter on
+> fields that no longer exist) — an unsupported stage is always an error, never a silent
+> no-op, because a dropped stage returns the wrong answer. The implemented set is exactly
+> what [README § Compatibility](README.md#compatibility) advertises and no more.
+
+> **Correction (2026-02-14, M6.2 — handshake stubs):** `replSetGetStatus` reports a
+> permanent one-member set that is always `PRIMARY`; without an answer Meteor never looks
+> for an oplog and the whole of M5 goes unused. `getParameter` answers only
+> `featureCompatibilityVersion` and simply omits anything else, rather than inventing values
+> for knobs chimera does not have.
+
+> **Correction (2026-02-14, M6.1 — the scaffold is not turnkey):** `meteor create --full`
+> writes `package.json` but does not install it, so the app dies on a missing
+> `@babel/runtime`; and the generated `links.insert` method calls the synchronous
+> `Collection.insert` that Meteor 3 removed. Both are scaffold bugs, not chimera bugs, but
+> both stop the demo — `run-meteor.sh` therefore runs `meteor npm install` and patches the
+> method to `insertAsync`, so the fix lives in a tracked script rather than in an untracked
+> `.run/` directory.
+
+> **Correction (2026-02-14, M6.3/M6.4 — what "two browsers" is evidence of):** the check
+> that matters is not that a second browser refreshes, it is *what woke it up*. With
+> `MONGO_OPLOG_URL` set, a page opened before the write received both a wire insert from
+> another browser and a raw `INSERT` from the `mariadb` client, live. Poll-and-diff would
+> also show the first; only oplog tailing shows the second, because Meteor never issues a
+> query that would notice a write it did not make.
 
 **Exit criteria:**
-- [ ] Reactive todos on 10.11 **and** 11.8, including the SQL-insert-appears-live demo.
+- [x] Reactive todos on 10.11 **and** 11.8, including the SQL-insert-appears-live demo.
 
 ---
 

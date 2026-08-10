@@ -7,6 +7,7 @@
 
 #include "chimera/codec.h"
 #include "chimera/error.h"
+#include "chimera/pipeline.h"
 #include "chimera/project.h"
 #include "chimera/sort.h"
 #include "collection.h"
@@ -188,6 +189,51 @@ Bson build_info_reply() {
   BSON_APPEND_BOOL(b, "debug", false);
   BSON_APPEND_INT32(b, "maxBsonObjectSize", kMaxBsonObjectSize);
   append_empty_array(b, "modules");
+  BSON_APPEND_DOUBLE(b, "ok", 1);
+  return reply;
+}
+
+// A driver asks the replica set for its status to decide whether an oplog is
+// worth tailing. ChimeraDB is a set of one that is always primary, so the answer
+// is short and never changes — but it has to be *an* answer, or Meteor falls
+// back to poll-and-diff and the oplog exists for nothing.
+Bson repl_set_status_reply(const ServerIdentity& identity) {
+  Bson reply;
+  bson_t* b = reply.get();
+  BSON_APPEND_UTF8(b, "set", "chimera");
+  BSON_APPEND_DATE_TIME(b, "date", now_millis());
+  BSON_APPEND_INT32(b, "myState", 1);  // PRIMARY
+  BSON_APPEND_INT32(b, "term", 1);
+
+  bson_t members;
+  bson_t member;
+  BSON_APPEND_ARRAY_BEGIN(b, "members", &members);
+  BSON_APPEND_DOCUMENT_BEGIN(&members, "0", &member);
+  BSON_APPEND_INT32(&member, "_id", 0);
+  BSON_APPEND_UTF8(&member, "name", identity.host.c_str());
+  BSON_APPEND_INT32(&member, "health", 1);
+  BSON_APPEND_INT32(&member, "state", 1);
+  BSON_APPEND_UTF8(&member, "stateStr", "PRIMARY");
+  BSON_APPEND_BOOL(&member, "self", true);
+  bson_append_document_end(&members, &member);
+  bson_append_array_end(b, &members);
+
+  BSON_APPEND_DOUBLE(b, "ok", 1);
+  return reply;
+}
+
+// `getParameter` is a diagnostic surface with hundreds of knobs and ChimeraDB
+// has none of them. Only the one drivers actually gate behaviour on is answered;
+// anything else is left out of the reply rather than invented.
+Bson get_parameter_reply(const bson_t* body) {
+  Bson reply;
+  bson_t* b = reply.get();
+  if (bson_has_field(body, "featureCompatibilityVersion")) {
+    bson_t fcv;
+    BSON_APPEND_DOCUMENT_BEGIN(b, "featureCompatibilityVersion", &fcv);
+    BSON_APPEND_UTF8(&fcv, "version", "6.0");
+    bson_append_document_end(b, &fcv);
+  }
   BSON_APPEND_DOUBLE(b, "ok", 1);
   return reply;
 }
@@ -412,6 +458,36 @@ Bson cmd_count(Ctx& ctx) {
   return reply;
 }
 
+Bson cmd_aggregate(Ctx& ctx) {
+  bson_t pipeline;
+  sub_document(ctx, "pipeline", &pipeline);
+  Pipeline plan = split_pipeline(&pipeline);
+
+  const Namespace ns = ctx.ns();
+  Collection collection(ctx.sql(), ns);
+  std::vector<Bson> documents;
+  // As with `find`, a collection that was never created aggregates to nothing.
+  if (collection.exists()) {
+    documents = run_stages(collection.load(plan.prefilter.get()), plan.stages);
+  } else {
+    // The stages still run: `$count` and a `$group` on a constant key have
+    // answers over an empty input, and a client is entitled to them.
+    documents = run_stages({}, plan.stages);
+  }
+
+  const int64_t batch_size = number(ctx.body, "batchSize", kDefaultBatchSize);
+  const size_t take =
+      std::min<size_t>(documents.size(), batch_size < 0 ? 0 : static_cast<size_t>(batch_size));
+  std::vector<Bson> first;
+  first.reserve(take);
+  for (size_t i = 0; i < take; ++i) first.push_back(std::move(documents[i]));
+  documents.erase(documents.begin(), documents.begin() + take);
+
+  const int64_t cursor_id =
+      documents.empty() ? 0 : CursorRegistry::instance().open(ns.text(), std::move(documents));
+  return cursor_reply(cursor_id, ns.text(), "firstBatch", first);
+}
+
 Bson cmd_distinct(Ctx& ctx) {
   const std::string key = text_field(ctx.body, "key");
   if (key.empty()) throw missing_command_field("BSON field 'distinct.key' is missing but a required field");
@@ -471,6 +547,16 @@ void append_write_error(bson_t* array, uint32_t slot, size_t op_index,
   bson_append_document_end(array, &entry);
 }
 
+// MongoDB omits `writeErrors` entirely when a batch succeeded, and the Node
+// driver relies on that: it treats the field's presence as proof there is a
+// first error to throw, and dies on an empty array before it can report
+// anything useful. So the array is built to one side and attached only if it
+// has something in it.
+void append_write_errors(bson_t* reply, const bson_t* errors) {
+  if (bson_empty(errors)) return;
+  bson_append_array(reply, "writeErrors", 11, errors);
+}
+
 // Each element of a write batch is its own transaction. Mongo does not make a
 // batch atomic, and rolling the whole batch back would discard the writes that
 // already succeeded before an unordered failure.
@@ -500,8 +586,8 @@ Bson cmd_insert(Ctx& ctx) {
   collection.create(/*error_if_exists=*/false);  // Mongo creates on first insert
 
   Bson reply;
-  bson_t errors;
-  BSON_APPEND_ARRAY_BEGIN(reply.get(), "writeErrors", &errors);
+  Bson error_list;
+  bson_t& errors = *error_list.get();
   int32_t inserted = 0;
   uint32_t slot = 0;
   const auto values = array_values(documents->get());
@@ -521,7 +607,7 @@ Bson cmd_insert(Ctx& ctx) {
       if (ordered) break;
     }
   }
-  bson_append_array_end(reply.get(), &errors);
+  append_write_errors(reply.get(), error_list.get());
   BSON_APPEND_INT32(reply.get(), "n", inserted);
   BSON_APPEND_DOUBLE(reply.get(), "ok", 1);
   return reply;
@@ -542,8 +628,8 @@ Bson cmd_update(Ctx& ctx) {
   std::vector<std::pair<size_t, Value>> upserted;
 
   Bson reply;
-  bson_t errors;
-  BSON_APPEND_ARRAY_BEGIN(reply.get(), "writeErrors", &errors);
+  Bson error_list;
+  bson_t& errors = *error_list.get();
   uint32_t slot = 0;
   const auto values = array_values(updates->get());
   for (size_t i = 0; i < values.size(); ++i) {
@@ -571,7 +657,7 @@ Bson cmd_update(Ctx& ctx) {
       if (ordered) break;
     }
   }
-  bson_append_array_end(reply.get(), &errors);
+  append_write_errors(reply.get(), error_list.get());
 
   // An upsert counts toward `n`, which is how a driver learns it happened.
   BSON_APPEND_INT32(reply.get(), "n", matched + static_cast<int32_t>(upserted.size()));
@@ -606,8 +692,8 @@ Bson cmd_delete(Ctx& ctx) {
   int32_t removed = 0;
 
   Bson reply;
-  bson_t errors;
-  BSON_APPEND_ARRAY_BEGIN(reply.get(), "writeErrors", &errors);
+  Bson error_list;
+  bson_t& errors = *error_list.get();
   uint32_t slot = 0;
   if (collection.exists()) {
     const auto values = array_values(deletes->get());
@@ -633,7 +719,7 @@ Bson cmd_delete(Ctx& ctx) {
       }
     }
   }
-  bson_append_array_end(reply.get(), &errors);
+  append_write_errors(reply.get(), error_list.get());
   BSON_APPEND_INT32(reply.get(), "n", removed);
   BSON_APPEND_DOUBLE(reply.get(), "ok", 1);
   return reply;
@@ -924,6 +1010,8 @@ Bson dispatch_command(const wire::Request& req, ConnectionState& state) noexcept
     }
     if (command == "ping") return ok_reply();
     if (command == "buildInfo" || command == "buildinfo") return build_info_reply();
+    if (command == "replSetGetStatus") return repl_set_status_reply(state.identity());
+    if (command == "getParameter") return get_parameter_reply(req.body.get());
     // Logical sessions are accepted and ignored: `lsid` and `txnNumber` ride
     // along on every command and need no bookkeeping while there is no
     // multi-statement transaction to resume.
@@ -935,6 +1023,7 @@ Bson dispatch_command(const wire::Request& req, ConnectionState& state) noexcept
     if (command == "getMore") return cmd_get_more(ctx);
     if (command == "killCursors") return cmd_kill_cursors(ctx);
     if (command == "count") return cmd_count(ctx);
+    if (command == "aggregate") return cmd_aggregate(ctx);
     if (command == "distinct") return cmd_distinct(ctx);
 
     if (command == "insert") return cmd_insert(ctx);

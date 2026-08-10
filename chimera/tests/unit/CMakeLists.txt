@@ -10,6 +10,7 @@ add_executable(translator_tests
   test_update.cpp
   test_query.cpp
   test_oplog.cpp
+  test_pipeline.cpp
 )
 target_link_libraries(translator_tests PRIVATE chimera_translator doctest::doctest)
 target_compile_options(translator_tests PRIVATE -Wall -Wextra)
