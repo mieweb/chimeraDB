@@ -243,12 +243,12 @@ Packaging without CI means release artifacts built by hand on one Mac.
 # Tickets — three M8 items that are their own projects
 
 These are spun out of [chimeraDB-plan.md § Milestone 8](chimeraDB-plan.md#milestone-8--hardening-backlog-explicitly-out-of-scope-for-v1--do-not-start-without-discussion).
-Each is written to be pasted into a GitHub issue as-is. None is scheduled; each needs its
-own decision before it starts.
+Each is filed as a GitHub issue. None is scheduled; each needs its own decision before it
+starts, and the decision — not the implementation — is what the issue leads with.
 
 ---
 
-### T1 — Vector search (plugin-side MHNSW)
+### T1 — Vector search (plugin-side MHNSW) · [#2](https://github.com/mieweb/chimeraDB/issues/2)
 
 **Summary.** `$vectorSearch`-shaped stage plus `createIndexes {type:"vectorSearch"}`, backed
 by a per-index sibling InnoDB graph table maintained by the translator through the SQL-service
@@ -283,7 +283,7 @@ target with evidence, and a documented consistency model for raw-SQL writes.
 
 ---
 
-### T2 — `chimerash`, the dual-language REPL
+### T2 — `chimerash`, the dual-language REPL · [#3](https://github.com/mieweb/chimeraDB/issues/3)
 
 **Summary.** A client-side router: naked SQL goes out over the MySQL protocol, naked mongosh
 syntax goes out over the Mongo wire protocol, at one prompt. This is the no-server-fork answer
@@ -311,7 +311,7 @@ installed by the same M9 pipeline, with a documented and testable dispatch rule.
 
 ---
 
-### T3 — `eager` projection automation
+### T3 — `eager` projection automation · [#4](https://github.com/mieweb/chimeraDB/issues/4)
 
 **Summary.** [D4](chimeraDB-plan.md#locked-decisions) promised three projection modes;
 `manual` ships, `lazy` is trivial, `eager` means the server samples incoming documents for new
