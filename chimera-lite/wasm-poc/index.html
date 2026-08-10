@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>chimera-lite wasm REPL</title>
+  <style>
+    .repl-shell { font-family: ui-monospace, Menlo, monospace; max-width: 72rem; margin: 1rem auto; padding: 0 1rem; }
+    .repl-transcript { background: #101418; color: #d8e0e8; padding: 1rem; border-radius: 6px; min-height: 16rem; max-height: 65vh; overflow-y: auto; white-space: pre-wrap; margin: 0; }
+    .repl-transcript .repl-echo { color: #8ec07c; }
+    .repl-transcript .repl-error { color: #fb6962; }
+    .repl-transcript .repl-meta { color: #7c8896; }
+    .repl-prompt-row { display: flex; gap: .5rem; margin-top: .5rem; align-items: center; }
+    .repl-prompt-label { color: #4a5; }
+    .repl-input { flex: 1; font: inherit; padding: .45rem .6rem; border: 1px solid #4a5; border-radius: 4px; }
+    .repl-input:focus { outline: 2px solid #8ec07c; }
+    .repl-hint { color: #667; font-size: .85em; }
+  </style>
+</head>
+<body>
+  <main class="repl-shell">
+    <h1>chimera-lite — go-mysql-server in wasm + OPFS</h1>
+    <pre id="repl-transcript" class="repl-transcript" aria-live="polite" aria-label="SQL session transcript"></pre>
+    <div class="repl-prompt-row">
+      <label for="repl-input" class="repl-prompt-label" id="repl-prompt-label">sql&gt;</label>
+      <input id="repl-input" class="repl-input" type="text" autocomplete="off" spellcheck="false"
+             aria-labelledby="repl-prompt-label" aria-describedby="repl-hint"
+             placeholder="loading wasm…" disabled>
+    </div>
+    <p id="repl-hint" class="repl-hint">Enter runs the statement · ↑/↓ browse history (kept across reloads) · table `todos` persists via OPFS</p>
+  </main>
+  <script src="wasm_exec.js"></script>
+  <script>
+    "use strict";
+    const transcript = document.getElementById("repl-transcript");
+    const input = document.getElementById("repl-input");
+    const HISTORY_KEY = "chimera-lite-history";
+    const HISTORY_MAX = 200;
+    let history = [];
+    try { history = JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch { /* fresh start */ }
+    let histPos = history.length; // one past the end = editing a new line
+    let draft = "";
+
+    function append(text, cls) {
+      const span = document.createElement("span");
+      if (cls) span.className = cls;
+      span.textContent = text + "\n";
+      transcript.appendChild(span);
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+
+    // Called by Go for boot/log lines.
+    window.chimeraLog = line => append(line, "repl-meta");
+
+    window.chimeraReady = () => {
+      input.disabled = false;
+      input.placeholder = "SELECT * FROM todos";
+      input.focus();
+    };
+
+    function renderTable(res) {
+      if (res.columns.length === 1 && res.columns[0] === "__ok_result__" && res.rows.length === 1) {
+        append(`${res.rows[0][0]} (${res.ms} ms)`, "repl-meta");
+        return;
+      }
+      if (!res.columns.length && !res.rows.length) { append(`ok (${res.ms} ms)`, "repl-meta"); return; }
+      const widths = res.columns.map((c, i) =>
+        Math.max(c.length, ...res.rows.map(r => String(r[i]).length)));
+      const line = sep => widths.map(w => sep.repeat(w + 2)).join("+");
+      const fmt = cells => cells.map((c, i) => " " + String(c).padEnd(widths[i] + 1)).join("|");
+      append("+" + line("-") + "+", null);
+      append("|" + fmt(res.columns) + "|", null);
+      append("+" + line("-") + "+", null);
+      for (const r of res.rows) append("|" + fmt(r) + "|", null);
+      append("+" + line("-") + "+", null);
+      append(`${res.rows.length} row(s) (${res.ms} ms)`, "repl-meta");
+    }
+
+    async function run(stmt) {
+      append("sql> " + stmt, "repl-echo");
+      try {
+        renderTable(await window.chimeraQuery(stmt));
+      } catch (err) {
+        append("ERROR: " + err, "repl-error");
+      }
+    }
+
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") {
+        const stmt = input.value.trim();
+        if (!stmt) return;
+        if (history[history.length - 1] !== stmt) {
+          history.push(stmt);
+          if (history.length > HISTORY_MAX) history.shift();
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+        }
+        histPos = history.length;
+        draft = "";
+        input.value = "";
+        run(stmt);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (histPos === 0) return;
+        if (histPos === history.length) draft = input.value;
+        histPos--;
+        input.value = history[histPos];
+        input.setSelectionRange(input.value.length, input.value.length);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (histPos >= history.length) return;
+        histPos++;
+        input.value = histPos === history.length ? draft : history[histPos];
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    });
+
+    const go = new Go();
+    (WebAssembly.instantiateStreaming
+      ? WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject)
+      : fetch("main.wasm").then(r => r.arrayBuffer()).then(b => WebAssembly.instantiate(b, go.importObject))
+    ).then(r => go.run(r.instance))
+     .catch(err => append("wasm load failed: " + err, "repl-error"));
+  </script>
+</body>
+</html>

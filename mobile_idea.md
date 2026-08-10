@@ -17,7 +17,7 @@ or browser app gets the same "document + SQL projection" model offline.
 |---|---|---|---|---|
 | `libmysqld` (embedded server) | The whole MariaDB server as an in-process library — lives in [mariadb-server/libmysqld](mariadb-server/libmysqld) | ❌ no port exists; heavily threaded, signal-dependent, huge | ⚠️ plain C/C++ so *conceivable*, but GPLv2 vs App Store + size + zero upstream support | 100% (it *is* MariaDB) |
 | MariaDB-in-a-VM | Full server inside x86 emulation (v86 / WebVM / container2wasm) | ✅ works as a stunt; huge & slow | ❌ | 100% |
-| **`go-mysql-server`** (Dolt engine) | Pure-Go MySQL-dialect engine + wire server, Apache-2.0, pluggable storage backends | ✅ plausible (`GOOS=js GOARCH=wasm`, one cgo dep to shim — see §3) | ✅ plausible (gomobile; Apache-2.0 is App-Store-safe) | ~90% (reimplementation) |
+| **`go-mysql-server`** (Dolt engine) | Pure-Go MySQL-dialect engine + wire server, Apache-2.0, pluggable storage backends | ✅ **proven** — see §2b (`-tags gms_pure_go` + one-line vendor patch) | ✅ plausible (gomobile; Apache-2.0 is App-Store-safe) | ~90% (reimplementation) |
 | SQLite / DuckDB / PGlite | The incumbents | ✅ | ✅ | ❌ not MySQL dialect |
 
 **Why PGlite worked for Postgres but not here:** Postgres has a true single-process /
@@ -70,10 +70,31 @@ Observed caveats:
 - The bundled **`memory` backend is not persistent** and doesn't support savepoints
   (trigger rollback logs an error but the trigger itself works). Persistence requires a
   storage backend — that's the integration point (§4).
-- **`go-icu-regex` is unconditional cgo** (no pure-Go fallback, no build tags). Fine on
-  macOS/iOS; a blocker for `GOOS=js GOARCH=wasm` until shimmed with a `replace`
-  directive pointing at a pure-Go `regexp` implementation of its small API
-  (`Uregex_open/find/start/end/close` + replace).
+- **ICU cgo is optional after all:** upstream ships a pure-Go regex fallback behind the
+  **`gms_pure_go` build tag** (`internal/regex/regex_pure.go`) — no shim needed for
+  cgo-less targets. (Native builds without the tag still need the Homebrew ICU flags
+  above.)
+- **In-process API quirk:** aggregates over an *empty* table yield **zero rows** via
+  `Engine.Query` (over the wire you'd get one row) — guard `rows[0]` access.
+
+## 2b. PROVEN: wasm + OPFS in a browser
+
+[chimera-lite/wasm-poc](chimera-lite/wasm-poc/main.go) runs GMS **inside Chromium**
+(V8 + Blink — note a *bare* V8 isolate has no OPFS; it's a browser API, so the test
+vehicle is a page, driven headlessly). `./chimera-lite/wasm-poc/serve.sh` builds and
+serves it. Verified 2026-08-10:
+
+- engine boots, `CREATE TABLE` / `INSERT` / `SELECT` with JSON extraction all work;
+- **generated columns are supported** (`ALTER … ADD COLUMN … GENERATED ALWAYS AS
+  (JSON_UNQUOTE(JSON_EXTRACT(doc,…)))`) — the chimera projection idiom works locally;
+- `REGEXP` works on the pure-Go path;
+- **OPFS persistence survives reload** (snapshot written via `syscall/js` →
+  `navigator.storage.getDirectory()` → `createWritable`; restored on next load);
+- build recipe: `GOOS=js GOARCH=wasm go build -tags gms_pure_go` + one **one-line
+  vendored patch** (vitess `auth_server_static.go` uses `syscall.SIGHUP`, undefined on
+  js/wasm — `serve.sh` re-applies it after `go mod vendor`);
+- **size: 82 MB wasm stripped (`-s -w`), 22.3 MB gzipped** — fine for a dev tool or PWA
+  with caching, heavy for a consumer page.
 
 ---
 
@@ -82,16 +103,15 @@ Observed caveats:
 ### iOS
 - `gomobile bind` a Go package embedding the engine; expose the minimongo-ish API to
   Swift. Apache-2.0 → no App Store friction (unlike GPLv2 `libmysqld`).
-- ICU cgo dep compiles for iOS, or shim it the same way as for WASM to keep the build
-  simple.
+- Build with `-tags gms_pure_go` (see §2b) and there's no ICU/cgo dependency at all.
 
 ### Browser (WASM)
-- Pure Go compiles to `js/wasm`; goroutines work. Two obstacles:
-  1. the ICU shim above;
-  2. a persistence backend over OPFS/IndexedDB (the `memory` backend gives you a
-     PGlite-style *ephemeral* database for free).
-- Go WASM binaries are large (~10–30 MB before compression) — acceptable for tools,
-  heavy for consumer pages. TinyGo is not an option (reflection-heavy engine).
+- **Done — see §2b.** Remaining engineering beyond the PoC:
+  1. a real persistence backend over OPFS (the snapshot-on-exit approach is a demo;
+     page-level storage wants a worker + `createSyncAccessHandle`, same design as
+     SQLite's OPFS VFS);
+  2. size diet if consumer-facing (82 MB / 22.3 MB gzipped measured). TinyGo is not an
+     option (reflection-heavy engine).
 
 ---
 
@@ -155,10 +175,12 @@ Open questions (deliberately unanswered):
 
 ## 5. Next experiments (if/when picked up)
 
-- [ ] Write a 50-line Go program: GMS in-process (no wire server), create a chimera-style
-      collection table, insert extJSON docs, `JSON_VALUE` projection as generated column.
+- [x] GMS in-process (no wire server): chimera-style collection table, JSON docs,
+      generated-column projection — *done in [chimera-lite/wasm-poc](chimera-lite/wasm-poc/main.go), in a browser no less*
 - [ ] Port one `find` filter (e.g. `{done:false, owner:"dana"}`) through a toy
       filter→SQL compiler and compare results with the chimera translator's output.
-- [ ] Try `GOOS=js GOARCH=wasm go build` with a `replace` shim for `go-icu-regex`;
-      measure binary size.
+- [x] `GOOS=js GOARCH=wasm` build — *no ICU shim needed (`gms_pure_go` tag); one-line
+      vitess vendor patch; 82 MB stripped / 22.3 MB gzipped*
+- [x] OPFS persistence across page reloads — *snapshot restore verified in Chromium*
 - [ ] Prototype an `observe()` on a local oplog table with a trigger populating it.
+- [ ] Worker + `createSyncAccessHandle` page-level storage backend (replace snapshots).
