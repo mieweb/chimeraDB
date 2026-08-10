@@ -115,7 +115,7 @@ Dev port conventions (so everything can run simultaneously):
 > | 10.11 LTS | `mariadb-10.11/` | `mariadb-10.11/build/sql/mariadbd` | `10.11.18-MariaDB` (client `15.1`) |
 > | oracle | `mongodb/` | `mongodb/build/install/bin/mongod` + `bin/mongo` | `8.0.12` |
 
-- [ ] **M0.1** Create the `chimera/` directory skeleton above with a `README.md` explaining
+- [x] **M0.1** Create the `chimera/` directory skeleton above with a `README.md` explaining
   the folder's organizing principle (one paragraph per subdirectory).
 - [x] **M0.2** ✅ `/mariadb-10.11/` added to [.gitignore](.gitignore) alongside the other clones.
 - [x] **M0.3** ✅ 10.11 lives in its own **shallow clone** `mariadb-10.11/` at tag
@@ -145,32 +145,33 @@ Dev port conventions (so everything can run simultaneously):
   mariadb-server/build/sql/mariadbd --version   # 11.8.8-MariaDB for osx10.21 on arm64
   mariadb-10.11/build/sql/mariadbd --version    # 10.11.18-MariaDB for osx10.21 on arm64
   ```
-- [ ] **M0.5** Create an installed layout for each tree (needed for `mariadb-install-db`,
+- [x] **M0.5** Create an installed layout for each tree (needed for `mariadb-install-db`,
   plugin dirs, and mtr later — this is the gap that blocked the earlier smoke test):
   ```sh
   cmake --install mariadb-server/build --prefix "$PWD/mariadb-server/dist"
   cmake --install mariadb-10.11/build --prefix "$PWD/mariadb-10.11/dist"
   ```
-- [ ] **M0.6** Write `chimera/scripts/run-server.sh --server 10.11|11.8 [--fresh]` and
+- [x] **M0.6** Write `chimera/scripts/run-server.sh --server 10.11|11.8 [--fresh]` and
   `stop-server.sh`: init datadir with `mariadb-install-db` on first run, start `mariadbd`
   with the port conventions above, pidfile under `chimera/.run/`. Never hardcode paths —
   derive from `--server`.
-- [ ] **M0.7** Install the Apache-2.0 BSON/Mongo C libraries used by the translator:
+- [x] **M0.7** Install the Apache-2.0 BSON/Mongo C libraries used by the translator:
   ```sh
   brew install mongo-c-driver
   pkg-config --list-all | grep -iE 'bson|mongoc'   # note the pkg names (1.x: libbson-1.0; 2.x: bson2)
   ```
-- [ ] **M0.8** JSON feature probe on both servers (via `mariadb` client against each):
+- [x] **M0.8** JSON feature probe on both servers (via `mariadb` client against each):
   `SELECT JSON_VALUE('{"a":{"b":2}}','$.a.b');` returns `2`;
   `CREATE TEMPORARY TABLE t (d JSON, v INT AS (JSON_VALUE(d,'$.x')) VIRTUAL);` succeeds.
 - [x] **M0.9** ✅ Plugin precedents confirmed present in **both** trees:
   `plugin/daemon_example/`, `plugin/handler_socket/`, `plugin/test_sql_service/`.
 
 **Exit criteria:**
-- [ ] `run-server.sh --server 11.8` and `--server 10.11` start clean servers; probe SQL passes on both; skeleton committed.
+- [x] `run-server.sh --server 11.8` and `--server 10.11` start clean servers; probe SQL passes on both; skeleton committed.
 
-**Status:** binaries ready (M0.2–M0.4, M0.9 ✅); remaining work is install layouts (M0.5),
-scripts (M0.6), driver install (M0.7), JSON probe (M0.8), and the `chimera/` skeleton (M0.1).
+**Status:** complete. Both servers build, install, start and stop from
+[chimera/scripts/](chimera/scripts/), the JSON probe passes on each, and the `chimera/`
+skeleton is committed.
 
 ---
 
@@ -192,7 +193,14 @@ ergonomics, and a future data-migration bridge. Skippable without affecting late
   how types map, what discovery gets wrong. These observations feed D4/D5 defaults.
 
 **Exit criteria:**
-- [ ] Findings paragraph committed (or milestone explicitly marked skipped here).
+- [x] Findings paragraph committed (or milestone explicitly marked skipped here).
+
+> **Correction (2026-02-14, M0.5 — skipped, taking the escape hatch this milestone offers):**
+> M0.7 installed mongo-c-driver 2.x, and CONNECT's MONGO table type needs libmongoc **1.x**
+> at configure time. Installing a second driver alongside it to preview an ergonomics
+> question — on an engine ChimeraDB does not use — buys less than it costs, and the milestone
+> was written to be skippable. The projection defaults it would have informed (D4/D5) were
+> settled empirically instead, by M1's demo and M5's `chimera_add_projection`.
 
 ---
 
@@ -200,36 +208,36 @@ ergonomics, and a future data-migration bridge. Skippable without affecting late
 
 **Goal:** prove the storage model end-to-end with plain SQL on both versions.
 
-- [ ] **M1.1** Write `chimera/sql/catalog.sql`:
+- [x] **M1.1** Write `chimera/sql/catalog.sql`:
   - `CREATE DATABASE IF NOT EXISTS chimera_meta;`
   - `chimera_meta.collections(db_name, coll_name, projection_mode ENUM('manual','eager','lazy') DEFAULT 'manual', created_at, PRIMARY KEY(db_name, coll_name))`
-- [ ] **M1.2** Document the collection table convention in `chimera/README.md`:
+- [x] **M1.2** Document the collection table convention in `chimera/README.md`:
   - Mongo database ⇒ MariaDB database; collection ⇒ table.
   - `CREATE TABLE <db>.<coll> (_id VARBINARY(255) NOT NULL PRIMARY KEY, doc JSON NOT NULL) ENGINE=InnoDB;`
     (MariaDB's `JSON` alias adds the `JSON_VALID` check automatically.)
   - `_id` holds the canonical byte form produced by the translator (M2); for now use plain strings.
-- [ ] **M1.3** Write `chimera/scripts/demo-m1.sh --server <v>` executing this walkthrough
+- [x] **M1.3** Write `chimera/scripts/demo-m1.sh --server <v>` executing this walkthrough
   and asserting each result:
-  - [ ] create a `test.users` collection table + catalog row
-  - [ ] insert two extJSON documents (one with `{"$date": ...}` field)
-  - [ ] update one via `UPDATE … SET doc = JSON_SET(doc, '$.age', 31)`
-  - [ ] `ALTER TABLE test.users ADD COLUMN email VARCHAR(190) AS (JSON_VALUE(doc,'$.email')) PERSISTENT, ADD INDEX(email);`
+  - [x] create a `test.users` collection table + catalog row
+  - [x] insert two extJSON documents (one with `{"$date": ...}` field)
+  - [x] update one via `UPDATE … SET doc = JSON_SET(doc, '$.age', 31)`
+  - [x] `ALTER TABLE test.users ADD COLUMN email VARCHAR(190) AS (JSON_VALUE(doc,'$.email')) PERSISTENT, ADD INDEX(email);`
         — then `SELECT email FROM test.users` proves the **backfill happened during the ALTER** (D3)
-  - [ ] add a `VIRTUAL` + indexed column too; note no rebuild occurred
-  - [ ] prove drift is impossible: `UPDATE test.users SET email='x'` → error (generated column)
-  - [ ] type-mismatch probe (D8): declare an `INT` projection over a string path → NULL + warning captured
-  - [ ] nested/typed path example: `JSON_VALUE(doc, '$.createdAt."$date"')` extracts the extJSON date
-- [ ] **M1.4** Bidirectional write-through prototype (D10), hand-rolled: make `name` a
+  - [x] add a `VIRTUAL` + indexed column too; note no rebuild occurred
+  - [x] prove drift is impossible: `UPDATE test.users SET email='x'` → error (generated column)
+  - [x] type-mismatch probe (D8): declare an `INT` projection over a string path → NULL + warning captured
+  - [x] nested/typed path example: `JSON_VALUE(doc, '$.createdAt."$date"')` extracts the extJSON date
+- [x] **M1.4** Bidirectional write-through prototype (D10), hand-rolled: make `name` a
   **real** `VARCHAR(190)` column plus a `BEFORE UPDATE` trigger — if `doc` changed,
   recompute `name` from it; otherwise if `name` changed, `JSON_SET` it into `doc`
   (doc wins when both change in one statement). Acceptance is literally the README
   example: `UPDATE test.users SET name = 'Douglas Horner' WHERE email = 'doug@example.com';`
   then assert `JSON_VALUE(doc, '$.name')` changed with it. Add to `demo-m1.sh`.
-- [ ] **M1.5** Run the demo against **both** servers and fix any 10.11/11.8 divergence found
+- [x] **M1.5** Run the demo against **both** servers and fix any 10.11/11.8 divergence found
   (record divergences in `chimera/README.md`).
 
 **Exit criteria:**
-- [ ] `demo-m1.sh` green on 10.11 and 11.8.
+- [x] `demo-m1.sh` green on 10.11 and 11.8.
 
 ---
 
@@ -238,28 +246,28 @@ ergonomics, and a future data-migration bridge. Skippable without affecting late
 **Goal:** the shared brain used later by both the wire plugin and the UDF gateway.
 Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 
-- [ ] **M2.1** Scaffold `chimera/translator/` (CMake, pkg-config for libbson — support both
+- [x] **M2.1** Scaffold `chimera/translator/` (CMake, pkg-config for libbson — support both
   1.x and 2.x pkg names) + a unit-test target (single-header framework such as doctest).
-- [ ] **M2.2** **Codec module:** BSON ⇄ canonical Extended JSON using libbson's built-ins
+- [x] **M2.2** **Codec module:** BSON ⇄ canonical Extended JSON using libbson's built-ins
   (`bson_as_canonical_extended_json` / `bson_new_from_json`). Round-trip tests covering
   ObjectId, Date, Timestamp, Decimal128, Binary, nested arrays.
-- [ ] **M2.3** **`_id` canonicalization:** ObjectId | string | int → deterministic bytes for
+- [x] **M2.3** **`_id` canonicalization:** ObjectId | string | int → deterministic bytes for
   the `VARBINARY(255)` PK, and back. Covers Meteor random-string ids *and*
   `idGeneration:'MONGO'` ObjectIds. Property test: encode→decode is identity; ordering is stable.
-- [ ] **M2.4** **Filter compiler** (Meteor/minimongo subset): implicit `$eq`, `$gt/$gte/$lt/$lte/$ne`,
+- [x] **M2.4** **Filter compiler** (Meteor/minimongo subset): implicit `$eq`, `$gt/$gte/$lt/$lte/$ne`,
   `$in/$nin`, `$and/$or/$not`, `$exists`, `$regex`, basic `$elemMatch` → parameterized SQL
   `WHERE` over `JSON_VALUE`/`JSON_EXTRACT`/`JSON_CONTAINS` on `doc`. Unsupported operator ⇒
   clean, specific error (fail fast; no silent wrong answers). Every generated fragment uses
   bind parameters — **no string interpolation of user values** (injection surface).
-- [ ] **M2.5** **Update engine** (per D6): apply `$set/$unset/$inc/$push/$pull/$addToSet/$pop`
+- [x] **M2.5** **Update engine** (per D6): apply `$set/$unset/$inc/$push/$pull/$addToSet/$pop`
   (positional `$` deferred to backlog) to a BSON doc **in memory**; returns new doc + a
   changed-fields summary (used by the oplog writer in M5). Unit tests mirror MongoDB's
   documented semantics for each operator, including edge cases (missing paths, arrays).
-- [ ] **M2.6** Hygiene gate: `chimera/scripts/check-hygiene.sh` — fails if anything under
+- [x] **M2.6** Hygiene gate: `chimera/scripts/check-hygiene.sh` — fails if anything under
   `chimera/` includes or references `mongodb/src` (rule 1). Wire into `test.sh`.
 
 **Exit criteria:**
-- [ ] `ctest` green; hygiene gate green. (Server-independent — no dual-version matrix here.)
+- [x] `ctest` green; hygiene gate green. (Server-independent — no dual-version matrix here.)
 
 ---
 
@@ -267,15 +275,15 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 
 **Goal:** `mongo` shell connects to mariadbd and can `ping` — on both server versions.
 
-- [ ] **M3.1** Read the two in-tree precedents before writing code:
+- [x] **M3.1** Read the two in-tree precedents before writing code:
   [plugin/daemon_example](mariadb-server/plugin/daemon_example) (minimal daemon plugin
   lifecycle) and [plugin/handler_socket](mariadb-server/plugin/handler_socket) (a plugin
   running its own network listeners). Note how `st_maria_plugin` is declared, and how
   init/deinit manage threads.
-- [ ] **M3.2** Create `chimera/plugin/chimera_mongo/` with `CMakeLists.txt` using
+- [x] **M3.2** Create `chimera/plugin/chimera_mongo/` with `CMakeLists.txt` using
   `MYSQL_ADD_PLUGIN(chimera_mongo … MODULE_ONLY)`; declare `PLUGIN_LICENSE_GPL` and
   `MariaDB_PLUGIN_MATURITY_EXPERIMENTAL`. Link the translator static lib + libbson.
-- [ ] **M3.3** Write `chimera/scripts/link-plugin.sh` — symlinks the plugin dir into each
+- [x] **M3.3** Write `chimera/scripts/link-plugin.sh` — symlinks the plugin dir into each
   server tree's `plugin/` (server CMake auto-discovers subdirectories) and re-runs cmake:
   ```sh
   ln -sfn "$PWD/chimera/plugin/chimera_mongo" mariadb-server/plugin/chimera_mongo
@@ -284,28 +292,28 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
   This symlink is the **only** thing that ever touches the server trees (rule 2).
   Expect the plugin to need `#if MYSQL_VERSION_ID` guards for 10.11 vs 11.8 API drift —
   keep them few and commented.
-- [ ] **M3.4** Plugin skeleton: system variables `chimera_mongo_port` (defaults per port
+- [x] **M3.4** Plugin skeleton: system variables `chimera_mongo_port` (defaults per port
   table), `chimera_mongo_bind` (**default `127.0.0.1`** — no auth exists yet, never bind
   wide by default); listener thread started in plugin init, joined in deinit (server must
   shut down clean, no leaked threads).
-- [ ] **M3.5** Wire framing: implement **OP_MSG**, *plus* legacy **OP_QUERY only for the
+- [x] **M3.5** Wire framing: implement **OP_MSG**, *plus* legacy **OP_QUERY only for the
   initial `isMaster`/`hello` handshake* — drivers and the legacy shell send their first
   handshake as OP_QUERY before switching to OP_MSG. Reply with `OP_REPLY` for that one
   path. Everything else is OP_MSG-only.
-- [ ] **M3.6** Commands: `hello`/`isMaster` (present as single-node replica set:
+- [x] **M3.6** Commands: `hello`/`isMaster` (present as single-node replica set:
   `isWritablePrimary:true`, `setName:"chimera"`, `me`/`hosts`, `logicalSessionTimeoutMinutes:30`,
   `maxWireVersion:17`, `minWireVersion:0` — document why 17), `ping`, `buildInfo`,
   `endSessions` (accept + no-op), and a proper error envelope (`ok:0, code, codeName, errmsg`).
-- [ ] **M3.7** Manual verification with the built oracle shell against **both** servers:
+- [x] **M3.7** Manual verification with the built oracle shell against **both** servers:
   ```sh
   mongodb/build/install/bin/mongo --port 27018 --quiet --eval 'db.runCommand({ping:1})'
   mongodb/build/install/bin/mongo --port 27019 --quiet --eval 'db.runCommand({ping:1})'
   ```
-- [ ] **M3.8** `chimera/scripts/build-plugin.sh --server <v>` + extend `run-server.sh` to
+- [x] **M3.8** `chimera/scripts/build-plugin.sh --server <v>` + extend `run-server.sh` to
   `INSTALL SONAME 'chimera_mongo'` (or `--plugin-load-add`) automatically.
 
 **Exit criteria:**
-- [ ] Shell connects, `ping` and `hello` return well-formed replies on 10.11 **and** 11.8; clean server shutdown.
+- [x] Shell connects, `ping` and `hello` return well-formed replies on 10.11 **and** 11.8; clean server shutdown.
 
 ---
 
