@@ -118,15 +118,18 @@ Every MongoDB collection **is** an InnoDB table:
 |---|---|
 | `_id` | Primary key (ObjectId, string, and int ids all supported) |
 | `doc` | The full document, unmodified — the **canonical source of truth** |
-| Projected columns | `GENERATED ALWAYS AS (JSON_VALUE(doc,'$.path'))` — indexed, typed, **engine-maintained** |
+| Projected columns | `forward` (default): `GENERATED ALWAYS AS (JSON_VALUE(doc,'$.path'))` — indexed, typed, engine-maintained, read-only. `bidirectional`: a real column whose direct SQL `UPDATE` **writes through to the document** |
 | Oplog | An InnoDB table appended *inside the same transaction* as every mutation |
 | Projection modes | `manual` (DBA curates via `ALTER`), `eager` (auto), `lazy` (virtual, on demand) |
 
-Because projections are `GENERATED ALWAYS` columns, **drift is impossible by
+Forward projections are `GENERATED ALWAYS` columns, so **drift is impossible by
 construction**: the column cannot disagree with the document, cannot be written
 directly, and is updated atomically with the document in the same InnoDB
-transaction. Adding a projection to a billion existing documents is one `ALTER`
-— the rebuild *is* the backfill.
+transaction. Adding one to a billion existing documents is one `ALTER` — the
+rebuild *is* the backfill. Columns you declare `bidirectional` become directly
+`UPDATE`-able instead: a generated trigger writes the change through to the
+document (which always remains the source of truth), trading the engine's
+generated-column guarantee for plain-SQL writability.
 
 ### The party tricks
 
@@ -138,11 +141,75 @@ transaction. Adding a projection to a billion existing documents is one `ALTER`
   never shows rolled-back operations and is strictly commit-ordered. Meteor's
   observe driver was never fed this well.
 - **Both query languages, both directions.** Run SQL from a Mongo client
-  (`db.runCommand({chimeraSql: "SELECT …"})`) and Mongo queries from SQL
-  (`SELECT mongo_find('appdb.todos', '{"done": false}')`).
+  (`db.runCommand({chimeraSql: "SELECT …"})`) and verbatim mongosh statements
+  from SQL (`SELECT mongo('db.todos.find({ done: false })')`) — see
+  [One prompt, both languages](#one-prompt-both-languages).
 - **One backup, one transaction domain, one port pair.** `mariabackup` covers
   your documents, your projections, and your oplog — because they are one
   database.
+
+---
+
+## One prompt, both languages
+
+The same `mariadb>` prompt accepts your relational habits *and* your document
+habits — against the same rows.
+
+**Reading** (works with any projected column):
+
+```sql
+SELECT *
+FROM users
+WHERE email = 'doug@example.com'
+LIMIT 1;
+
+SELECT mongo('db.users.findOne({ email: "doug@example.com" })');
+```
+
+**Writing** — declare the column `bidirectional` once, and plain SQL writes
+through to the document:
+
+```sql
+CALL chimera_add_projection('appdb.users', '$.name', 'name', 'VARCHAR(190)', 'bidirectional');
+
+UPDATE users
+SET name = 'Douglas Horner'
+WHERE email = 'doug@example.com';
+
+CALL mongo('db.users.updateOne(
+  { email: "doug@example.com" },
+  { $set: { name: "Douglas Horner" } }
+)');
+```
+
+Both writes are equivalent — and identical to the same `updateOne` arriving
+over the wire protocol: each updates the document, lands exactly one entry in
+the transactional oplog, and appears live in every tailing Meteor client.
+
+The `mongo()` gateway takes your mongosh statement **verbatim** — paste the
+line inside quotes and go. Truly naked `db.users.findOne({…})` at the SQL
+prompt would require forking MariaDB's parser, and refusing to fork the server
+is the promise that keeps ChimeraDB a drop-in plugin. If you want one REPL that
+speaks both languages natively, `chimerash` is on the roadmap: a thin client
+that routes SQL over the MySQL protocol and mongo statements over the wire
+protocol.
+
+**Quoting rules.** The gateway parses its argument with mongosh (JS) string
+semantics, so single- and double-quoted strings are interchangeable *inside*
+the statement. The part to watch is the SQL lexer around it. Under MariaDB's
+default `sql_mode`, both of these work:
+
+```sql
+SELECT mongo('db.users.findOne({ email: "doug@example.com" })');
+SELECT mongo("db.users.findOne({ email: 'doug@example.com' })");
+```
+
+But the second form breaks under `ANSI_QUOTES` (as in `sql_mode=ANSI`), where
+double quotes delimit *identifiers*, not strings. House style: **single-quote
+the SQL, double-quote the JSON inside** — immune to `sql_mode`, and it matches
+canonical Extended JSON. Two lexer reminders: apostrophes in data are doubled
+per SQL (`"O''Brien"`), and backslashes are consumed once by the SQL lexer
+unless `NO_BACKSLASH_ESCAPES` is set (write `\\d` for a regex `\d`).
 
 ---
 
@@ -268,9 +335,11 @@ one row per document, the full document in a `JSON` column, plus whatever
 projected columns exist. `mariadb-dump` it, replicate it, `mariabackup` it —
 it's just MariaDB.
 
-**Can SQL corrupt my documents?** Generated columns can't be written at all.
-Direct `UPDATE`s to `doc` must still produce valid JSON (enforced by check),
-and they flow into the oplog via triggers, so document readers see them too.
+**Can SQL corrupt my documents?** Forward projections can't be written at all.
+Bidirectional columns accept `UPDATE`s and write through to the document via a
+generated trigger — the document remains the single source of truth. Direct
+`UPDATE`s to `doc` must still produce valid JSON (enforced by check). Every
+path flows into the oplog, so document readers see all of it.
 
 **What happens on a type mismatch?** Permissive by default (`JSON_VALUE` →
 NULL + warning), matching MariaDB semantics; a strict mode is on the roadmap.
@@ -283,9 +352,11 @@ oplog tailing tuned for Meteor.
 ## Roadmap
 
 Wire-level multi-document transactions (they map naturally onto InnoDB), SCRAM
-authentication on the Mongo listener, eager auto-projection policies, and a
-filter→SQL fast path are tracked in [chimeraDB-plan.md](chimeraDB-plan.md)
-(Milestone 8). Contributions welcome — start there.
+authentication on the Mongo listener, eager auto-projection policies, a
+filter→SQL fast path, and `chimerash` — a dual-language REPL that accepts naked
+SQL *and* naked mongosh at one prompt — are tracked in
+[chimeraDB-plan.md](chimeraDB-plan.md) (Milestone 8). Contributions welcome —
+start there.
 
 ## License & trademarks
 

@@ -31,7 +31,7 @@ maps each component in that diagram to where it gets built:
 | Doc-store conventions — collection tables, `chimera_meta` catalog | `chimera/sql/` | M1 |
 | Projection manager — `manual` today; `eager`/`lazy` knobs | `chimera/sql/` + plugin (`createIndexes`) | M1, M4 (automation: M8) |
 | Transactional oplog — same-txn append, triggers, pruning, tailable cursors | `chimera/sql/` + plugin | M5 |
-| Cross-language gateways — `mongo_find()` UDF, `chimeraSql`/`$sql` | plugin + translator | M7 |
+| Cross-language gateways — `mongo('db.users.findOne(…)')` verbatim gateway, `chimeraSql`/`$sql` | plugin + translator | M7 |
 | Meteor acceptance harness | `chimera/tests/meteor/` | M6 |
 
 ### Locked decisions
@@ -40,13 +40,14 @@ maps each component in that diagram to where it gets built:
 |---|---|---|
 | D1 | One engine (InnoDB), two protocol heads | Only shape where doc+projection writes are atomic; mongod exposes no XA so dual-engine can never be transaction-safe |
 | D2 | Compatibility bar = **Meteor.js** | Oplog tailing is the linchpin (hello presents a single-node replica set). The **authoritative** supported / not-supported command surface is the single table in [README § Compatibility](README.md#compatibility) — milestones implement exactly that list, nothing more |
-| D3 | Document is **source of truth**; projections are `GENERATED ALWAYS` columns | Engine-enforced: projection columns cannot drift. `ALTER … ADD COLUMN … AS (JSON_VALUE(doc,'$.path')) PERSISTENT` backfills natively (the ALTER rebuild *is* the scan) |
+| D3 | Document is **source of truth**; **forward** projections are `GENERATED ALWAYS` columns | Engine-enforced: forward columns cannot drift. `ALTER … ADD COLUMN … AS (JSON_VALUE(doc,'$.path')) PERSISTENT` backfills natively (the ALTER rebuild *is* the scan) |
 | D4 | Projection mode per collection: `manual` (default) \| `eager` \| `lazy` | Manual = DBA issues ALTERs. Eager = auto-ALTER on new paths (later). Lazy = no physical columns, JSON_VALUE on demand |
 | D5 | Storage encoding = **MongoDB Extended JSON (canonical)** in a `JSON` column | MariaDB JSON is text; extJSON preserves BSON types (ObjectId, Date, Timestamp, Decimal128). libbson converts both directions for free |
 | D6 | Update execution = **read-modify-write** (doc locked `FOR UPDATE`, ops applied via libbson in memory, full doc written back) | KISS: correct for *all* update operators under InnoDB row locking. Compile-to-SQL is a later optimization, not a requirement |
 | D7 | Oplog = InnoDB table written **in the same transaction** as the mutation; triggers on collection tables catch raw-SQL writes | Transactional oplog (never shows rolled-back writes) — stronger than real MongoDB. In-process commit notification wakes tailing cursors |
 | D8 | Type-mismatch policy: permissive (`JSON_VALUE` → NULL + warning) by default; strict mode later | Matches MariaDB semantics; documented knob |
 | D9 | All chimera code is GPLv2, out-of-tree, in `chimera/` | Zero patches to either upstream. Outbound licensing & trademark statement: [README § License & trademarks](README.md#license--trademarks) |
+| D10 | Projection **direction** per column: `forward` (default) \| `bidirectional` (real column + generated `BEFORE` write-through trigger, so plain `UPDATE t SET col=…` becomes `JSON_SET` on the doc) | Makes `UPDATE users SET name=…` legal SQL, opt-in. Doc wins if one statement changes both doc and column; SQL `INSERT` still supplies `doc`. Naked mongosh at the SQL prompt stays impossible without a parser fork (rule 2) — the `mongo('…')` verbatim gateway (M7.2) is the supported form. Promise documented in [README § One prompt, both languages](README.md#one-prompt-both-languages) |
 
 ### Non-negotiable ground rules
 
@@ -218,7 +219,13 @@ ergonomics, and a future data-migration bridge. Skippable without affecting late
   - [ ] prove drift is impossible: `UPDATE test.users SET email='x'` → error (generated column)
   - [ ] type-mismatch probe (D8): declare an `INT` projection over a string path → NULL + warning captured
   - [ ] nested/typed path example: `JSON_VALUE(doc, '$.createdAt."$date"')` extracts the extJSON date
-- [ ] **M1.4** Run the demo against **both** servers and fix any 10.11/11.8 divergence found
+- [ ] **M1.4** Bidirectional write-through prototype (D10), hand-rolled: make `name` a
+  **real** `VARCHAR(190)` column plus a `BEFORE UPDATE` trigger — if `doc` changed,
+  recompute `name` from it; otherwise if `name` changed, `JSON_SET` it into `doc`
+  (doc wins when both change in one statement). Acceptance is literally the README
+  example: `UPDATE test.users SET name = 'Douglas Horner' WHERE email = 'doug@example.com';`
+  then assert `JSON_VALUE(doc, '$.name')` changed with it. Add to `demo-m1.sh`.
+- [ ] **M1.5** Run the demo against **both** servers and fix any 10.11/11.8 divergence found
   (record divergences in `chimera/README.md`).
 
 **Exit criteria:**
@@ -358,9 +365,15 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
   oplog; shell B inserts via the wire; a third write goes through the **`mariadb` SQL
   client** — all three appear on the tail, in commit order.
 - [ ] **M5.7** Unit-test Meteor's oplog query shapes and Timestamp round-tripping.
+- [ ] **M5.8** Productize bidirectional projections (D10): `chimera_add_projection('<db>.<coll>',
+  '<json-path>', '<column>', '<type>', 'forward'|'bidirectional')` procedure — forward
+  emits the `GENERATED ALWAYS` ALTER; bidirectional emits a real column + backfill
+  `UPDATE` + regenerated `BEFORE` write-through trigger, ordered so the AFTER oplog
+  trigger (M5.3) captures the post-write-through doc.
 
 **Exit criteria:**
 - [ ] `demo-oplog.sh` shows wire-writes *and* raw-SQL writes streaming to a tailing cursor, on both versions.
+- [ ] A bidirectional-column `UPDATE` (M5.8) produces exactly one oplog `'u'` entry containing the merged document.
 
 ---
 
@@ -392,14 +405,24 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 
 ## Milestone 7 — Cross-language ergonomics
 
-**Goal:** the two "wrong-direction" query paths promised in the design.
+**Goal:** the cross-language paths promised in [README § One prompt, both languages](README.md#one-prompt-both-languages).
 
 - [ ] **M7.1** SQL from mongo clients: admin command `{chimeraSql: "SELECT …"}` (and a
   `$sql` aggregation stage alias) returning rows as BSON documents. Read-only by default;
   a system variable gates write statements.
-- [ ] **M7.2** Mongo syntax from SQL clients: `mongo_find('<db>.<coll>', '<filter-json>')`
-  UDF (loadable function linking the translator) returning a JSON array; stored-procedure
-  wrappers for insert/update/delete that also write oplog rows.
+- [ ] **M7.2** Verbatim mongosh from SQL clients: a `mongo('<statement>')` gateway (loadable
+  function linking the translator) that accepts a pasted shell statement —
+  `db.<coll>.<verb>(<relaxed-JSON args>)` — for `find`/`findOne`/`insertOne`/`insertMany`/
+  `updateOne`/`updateMany`/`replaceOne`/`deleteOne`/`deleteMany`/`countDocuments`/`aggregate`.
+  `SELECT mongo(…)` returns JSON; write verbs run through the translator so they hit the
+  oplog exactly like wire writes. Argument parsing follows mongosh string semantics
+  (single- **or** double-quoted strings, unquoted keys). Test under default *and*
+  `ANSI_QUOTES` sql_mode — the double-quoted-outer form legitimately breaks under
+  `ANSI_QUOTES` (identifier quoting) and must fail with a clear error, per
+  [README § One prompt, both languages](README.md#one-prompt-both-languages) quoting rules.
+  (Naked, unquoted mongo syntax at the SQL prompt would
+  require forking the server parser — ground rule 2 forbids it. The string wrapper is the
+  supported form; `chimerash` in M8 is the native-REPL answer.)
 - [ ] **M7.3** Document both with copy-paste examples in `chimera/README.md`.
 
 **Exit criteria:**
@@ -416,6 +439,8 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 - [ ] `eager` projection mode automation (sampling + auto-ALTER policy)
 - [ ] mongodump/mongorestore compatibility pass
 - [ ] Strict type-mismatch mode (D8)
+- [ ] `chimerash` — dual-language REPL (client-side router: naked SQL → MySQL protocol, naked
+  mongosh → wire protocol; the no-server-fork answer to unquoted mongo syntax at a prompt)
 - [ ] Performance baseline + regression suite
 
 ---
@@ -442,3 +467,4 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 | SQL injection via generated WHERE clauses | Bind parameters only (M2.4); code review gate |
 | Meteor driver expectations beyond the plan | M6 gap-list process; stub honestly, never advertise unimplemented features in `hello` |
 | Oplog table growth | M5.4 pruning knobs; monitor row count in tests |
+| Bidirectional projections are trigger-maintained (no `GENERATED ALWAYS` guarantee) | Opt-in per column (D10); triggers generated from templates, never hand-edited; `chimera_verify_projection()` recomputes and reports drift |
