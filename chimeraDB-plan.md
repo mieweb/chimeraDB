@@ -42,9 +42,10 @@ graph TB
     InnoDB --> OplogTable
     Projector --> DocTables
 
-    classDef head fill:#e8f0fe,stroke:#4285f4
-    classDef core fill:#e6f4ea,stroke:#34a853
-    classDef store fill:#fef7e0,stroke:#f9ab00
+    %% fixed fill + explicit dark text so nodes stay readable in both light and dark themes
+    classDef head fill:#e8f0fe,stroke:#4285f4,color:#0b2a5b
+    classDef core fill:#e6f4ea,stroke:#34a853,color:#0d3d1e
+    classDef store fill:#fef7e0,stroke:#f9ab00,color:#5c3d00
     class MongoClients,SQLClients,WirePlugin,SQLGateway head
     class Translator,SQLCore,Projector core
     class InnoDB,DocTables,OplogTable store
