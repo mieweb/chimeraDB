@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# chimeradb — the command a packaged install ships, and the only one a user runs
+# by hand.
+#
+#   chimeradb setup  [client options…]   load the catalog, create mongo()
+#   chimeradb status [client options…]   report what is and is not live
+#   chimeradb start  [client options…]   start the server, then report
+#
+# Anything that is not a subcommand is passed straight to the `mariadb` client,
+# so the connection is described exactly the way the user already knows how:
+#
+#   chimeradb setup --socket=/run/mysqld/mysqld.sock --user=root
+#
+# Deliberately not a package maintainer script. postinst cannot load SQL into a
+# server that may not be running, may be remote, or may need credentials; it
+# prints this command instead, and a printed instruction cannot leave apt broken.
+
+set -euo pipefail
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+die() { printf 'chimeradb: %s\n' "$*" >&2; exit 1; }
+note() { printf '==> %s\n' "$*"; }
+
+# One rule covers every layout: the checkout (cli/../sql) and any install prefix
+# (bin/../share/chimeradb/sql), which is what both a .deb and a Homebrew keg are.
+find_sql_dir() {
+  local dir
+  for dir in "$HERE/../sql" "$HERE/../share/chimeradb/sql"; do
+    [[ -f $dir/catalog.sql ]] && { (cd "$dir" && pwd); return 0; }
+  done
+  die "cannot find catalog.sql (looked beside $HERE and in ../share/chimeradb/sql)"
+}
+
+sql() { mariadb "${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}" "$@"; }
+scalar() { sql -N -B -e "$1" 2>/dev/null || true; }
+
+cmd_setup() {
+  local sql_dir
+  sql_dir=$(find_sql_dir)
+
+  note "loading the catalog from $sql_dir"
+  sql < "$sql_dir/catalog.sql"
+
+  # The UDF is what makes mongo('…') legal SQL (M7.2). IF NOT EXISTS so setup is
+  # safe to re-run, which is the only way a package can offer it.
+  note "creating the mongo() function"
+  sql -e "CREATE FUNCTION IF NOT EXISTS mongo RETURNS STRING SONAME 'chimera_mongo.so'"
+
+  cmd_status
+}
+
+cmd_status() {
+  local server plugin port bind catalog udf
+  server=$(scalar 'SELECT VERSION()')
+  [[ -n $server ]] || die "cannot reach the server — pass the same options you would give the mariadb client"
+  printf '  server    %s\n' "$server"
+
+  plugin=$(scalar "SELECT plugin_status FROM information_schema.plugins WHERE plugin_name = 'chimera_mongo'")
+  if [[ -z $plugin ]]; then
+    printf '  mongo     not loaded — add plugin_load_add=chimera_mongo to the server config\n'
+  else
+    port=$(scalar 'SELECT @@chimera_mongo_port')
+    bind=$(scalar 'SELECT @@chimera_mongo_bind')
+    printf '  mongo     %s on %s:%s\n' "$plugin" "$bind" "$port"
+    # The listener has no authentication yet (issue #5), so a non-loopback bind
+    # is worth saying out loud every single time it is seen.
+    [[ $bind == 127.* || $bind == localhost ]] ||
+      printf '  WARNING   %s is not loopback and the listener authenticates nobody\n' "$bind"
+  fi
+
+  catalog=$(scalar "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = 'chimera_meta'")
+  udf=$(scalar "SELECT COUNT(*) FROM mysql.func WHERE name = 'mongo'")
+  if [[ $catalog == 1 && $udf == 1 ]]; then
+    printf '  setup     done\n'
+  else
+    printf '  setup     incomplete — run: chimeradb setup\n'
+    return 1
+  fi
+}
+
+# Not a service manager. systemd already owns the server on Debian; this starts
+# it through systemd and then answers the question the user actually had, which
+# is whether the Mongo head came up with it.
+cmd_start() {
+  if command -v systemctl >/dev/null 2>&1; then
+    note "systemctl start mariadb"
+    systemctl start mariadb
+  elif command -v brew >/dev/null 2>&1; then
+    die "on Homebrew, start the server you installed against: brew services start mariadb@<series>, then chimeradb status"
+  else
+    die "no systemd here — start MariaDB the way this machine does, then run: chimeradb status"
+  fi
+  cmd_status
+}
+
+(($#)) || die "usage: chimeradb setup|status|start [client options…]"
+command=$1
+shift
+CLIENT_ARGS=("$@")
+
+case "$command" in
+  setup) cmd_setup ;;
+  status) cmd_status ;;
+  start) cmd_start ;;
+  -h|--help|help) sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command '$command' (expected setup, status or start)" ;;
+esac

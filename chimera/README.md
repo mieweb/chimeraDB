@@ -16,6 +16,7 @@ The organizing principle: *one subdirectory per layer of the architecture diagra
 | [sql/](sql/) | The storage conventions |
 | [scripts/](scripts/) | Every action, replayable |
 | [tests/](tests/) | Proof, at three levels |
+| [cli/](cli/) | The one command an installed user runs |
 | [packaging/](packaging/) | Reaching a machine that is not this one |
 
 [VERSION](VERSION) is the one loose file, and it is loose on purpose: it is the single

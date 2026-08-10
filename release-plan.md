@@ -205,11 +205,29 @@ patches) is honored. A package build has no server tree.
   that may not be running, may be remote, may need credentials. Ship `chimeradb setup`
   (loads the catalog/oplog SQL, creates the `mongo()` function) and have `postinst` print how
   to run it. A failed `postinst` leaves apt in a broken state; a printed instruction does not.
-- [ ] **M9.2.5** Decide what `chimeradb start` means on a systemd box, because the README
+
+  > Half done ahead of the packaging that consumes it: [cli/chimeradb](chimera/cli/chimeradb)
+  > exists and is exercised against both dev servers — `status` reports incomplete on a fresh
+  > datadir, `setup` loads `catalog.sql` and creates `mongo()`, re-running changes nothing,
+  > and `mongo('db.parts.findOne({})')` answers afterwards. One rule finds the SQL in every
+  > layout: `cli/../sql` in the checkout, `bin/../share/chimeradb/sql` in a `.deb` or a keg.
+  > There is no `oplog.sql`/`triggers.tpl.sql` to load — the plugin issues that DDL itself —
+  > so M9.2.2's package contents need correcting. `postinst` waits on M9.2.1.
+- [x] **M9.2.5** Decide what `chimeradb start` means on a systemd box, because the README
   promises it. Honest options: (a) a thin wrapper over `systemctl start mariadb` that then
   verifies the plugin loaded and prints both endpoints; (b) drop `start` on Debian and make
   the CLI `setup`/`status`/`verify` only. Do **not** invent a second service manager
   alongside systemd. README changes either way.
+
+  > **(a).** `start` is `systemctl start mariadb` followed by `status`, which is the question
+  > the user actually had — not "did mariadbd start" but "did the Mongo head come up with
+  > it". Where there is no systemd it refuses and names the command that machine does use,
+  > rather than guessing. `verify` is folded into `status`: two words for one answer is the
+  > kind of surface that exists because a plan listed it, and `status` already has to reach
+  > the server to say anything at all. It also reports a non-loopback bind as a warning every
+  > time, since the listener still authenticates nobody ([#5](https://github.com/mieweb/chimeraDB/issues/5)).
+  > The README edit rides with the exit-criteria item below, which already owns making every
+  > printed command true.
 - [ ] **M9.2.6** Target matrix, and the honest reason for each: Debian 12 (bookworm, native
   10.11), Ubuntu 24.04 (native 10.11), and MariaDB.org's 11.8 repo on both. Anything not in
   the matrix is not claimed.
