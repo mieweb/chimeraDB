@@ -23,7 +23,16 @@ private:
 
 TranslatorError bad_value(const std::string& message);
 TranslatorError failed_to_parse(const std::string& message);
+// A required field of a command document is absent. MongoDB reports these from
+// its IDL-generated parsers with a distinct code, and drivers surface it.
+TranslatorError missing_command_field(const std::string& message);
 TranslatorError type_mismatch(const std::string& message);
 TranslatorError not_implemented(const std::string& message);
+TranslatorError namespace_not_found(const std::string& message);
+TranslatorError namespace_exists(const std::string& message);
+TranslatorError index_not_found(const std::string& message);
+TranslatorError duplicate_key(const std::string& message);
+TranslatorError cursor_not_found(const std::string& message);
+TranslatorError internal_error(const std::string& message);
 
 }  // namespace chimera

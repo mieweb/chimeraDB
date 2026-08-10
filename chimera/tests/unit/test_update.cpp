@@ -66,8 +66,9 @@ TEST_CASE("$pull removes every equal element; $pop takes an end") {
 }
 
 TEST_CASE("a replacement document replaces everything but keeps _id") {
+  // _id leads the result, matching where MongoDB leaves it after a replacement.
   CHECK(updated(R"({"_id": "u1", "a": 1})", R"({"b": 2})") ==
-        R"({ "b" : { "$numberInt" : "2" }, "_id" : "u1" })");
+        R"({ "_id" : "u1", "b" : { "$numberInt" : "2" } })");
 }
 
 TEST_CASE("operators report which paths they touched, for the oplog writer") {

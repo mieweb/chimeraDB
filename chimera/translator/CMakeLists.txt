@@ -22,6 +22,8 @@ add_library(chimera_translator STATIC
   src/error.cpp
   src/filter.cpp
   src/id.cpp
+  src/project.cpp
+  src/sort.cpp
   src/update.cpp
 )
 target_include_directories(chimera_translator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

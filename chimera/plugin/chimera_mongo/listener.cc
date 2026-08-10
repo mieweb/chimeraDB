@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "chimera/error.h"
+#include "cursor.h"
 
 namespace chimera {
 namespace {
@@ -89,6 +90,9 @@ void Listener::stop() {
     if (thread.joinable()) thread.join();
   }
   connection_threads_.clear();
+
+  // Cursors hold materialized documents; nothing may outlive the listener.
+  CursorRegistry::instance().kill_all();
 }
 
 void Listener::accept_loop() {
@@ -121,6 +125,11 @@ void Listener::accept_loop() {
 }
 
 void Listener::serve(int fd, int64_t connection_id) {
+  // Every connection thread owns a MariaDB thread context, because the SQL
+  // service builds a THD on top of it the moment a command needs the database.
+  SqlThreadScope thread_scope;
+  ConnectionState state(identity_, connection_id);
+
   std::vector<uint8_t> raw;
   while (!stopping_.load()) {
     bool alive;
@@ -140,7 +149,7 @@ void Listener::serve(int fd, int64_t connection_id) {
       // can decode.
       request.legacy_query = request.header.op_code == wire::kOpQuery;
       request = wire::parse_request(raw);
-      reply = dispatch_command(request, identity_, connection_id);
+      reply = dispatch_command(request, state);
     } catch (const TranslatorError& e) {
       reply = Bson();
       BSON_APPEND_DOUBLE(reply.get(), "ok", 0);

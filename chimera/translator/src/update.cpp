@@ -27,7 +27,7 @@ std::vector<Value> each_values(const bson_value_t& spec) {
       }
       for (const auto& field : document_fields(&view)) {
         if (!field.first.empty() && field.first[0] == '$') {
-          throw not_implemented("modifier '" + field.first + "' is not supported");
+          throw failed_to_parse("Unknown modifier: " + field.first);
         }
       }
     }
@@ -116,7 +116,8 @@ private:
       }
       doc_ = set_array(doc_.get(), path, elements);
     } else {
-      throw not_implemented("unsupported update operator '" + op + "'");
+      // MongoDB's wording and code for a modifier it does not recognize.
+      throw failed_to_parse("Unknown modifier: " + op);
     }
   }
 };
@@ -135,12 +136,18 @@ UpdateResult apply_update(const bson_t* doc, const bson_t* update) {
   }
 
   if (!has_operators) {
-    // Replacement: the new document wins, but _id is immutable.
-    Bson replacement = Bson::copy_of(update);
+    // Replacement: the new document wins, but _id is immutable — and stays the
+    // first field, which is where the oracle leaves it.
+    Bson replacement;
     auto id = path_get(doc, {"_id"});
-    if (id) replacement = path_set(replacement.get(), {"_id"}, id->get());
+    if (id) bson_append_value(replacement.get(), "_id", 3, &id->get());
     std::vector<std::string> changed;
-    for (const auto& field : top) changed.push_back(field.first);
+    for (const auto& field : top) {
+      changed.push_back(field.first);
+      if (id && field.first == "_id") continue;
+      bson_append_value(replacement.get(), field.first.c_str(),
+                        static_cast<int>(field.first.size()), &field.second.get());
+    }
     return {std::move(replacement), std::move(changed)};
   }
 

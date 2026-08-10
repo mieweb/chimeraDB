@@ -15,8 +15,11 @@ namespace chimera {
 //
 //   0x07 + 12 raw bytes             ObjectId
 //   0x02 + UTF-8 bytes              string  (Meteor's default random ids)
-//   0x12 + 8 bytes, big-endian,     any integer — int32 and int64 share the tag
-//          sign bit flipped         so `1` and `NumberLong(1)` are one key
+//   0x12 + 8 bytes, big-endian,     any integer — int32, int64 and a double
+//          sign bit flipped         with no fractional part all share the tag,
+//                                   so `1`, `NumberLong(1)` and `1.0` are one key
+//   0x01 + 8 bytes, IEEE-754,       a double that is not integral
+//          order-normalized
 //
 // Integral ids therefore decode back as int64. That normalization is the point:
 // it is what makes duplicate-key detection agree with MongoDB's numeric

@@ -1,5 +1,6 @@
 #include "chimera/id.h"
 
+#include <cmath>
 #include <cstring>
 
 #include "chimera/error.h"
@@ -7,23 +8,47 @@
 namespace chimera {
 namespace {
 
+constexpr char kTagDouble = static_cast<char>(BSON_TYPE_DOUBLE);  // 0x01
 constexpr char kTagString = static_cast<char>(BSON_TYPE_UTF8);   // 0x02
 constexpr char kTagOid = static_cast<char>(BSON_TYPE_OID);       // 0x07
 constexpr char kTagInt = static_cast<char>(BSON_TYPE_INT64);     // 0x12
 
-// Flipping the sign bit makes two's-complement integers sort correctly as
-// unsigned big-endian bytes, so InnoDB's key order matches numeric order.
-std::string encode_int(int64_t n) {
-  uint64_t biased = static_cast<uint64_t>(n) ^ (1ULL << 63);
+std::string big_endian(uint64_t bits) {
   std::string out(8, '\0');
-  for (int i = 0; i < 8; ++i) out[i] = static_cast<char>((biased >> (56 - 8 * i)) & 0xFF);
+  for (int i = 0; i < 8; ++i) out[i] = static_cast<char>((bits >> (56 - 8 * i)) & 0xFF);
   return out;
 }
 
+uint64_t from_big_endian(const std::string& bytes) {
+  uint64_t bits = 0;
+  for (int i = 0; i < 8; ++i) bits = (bits << 8) | static_cast<uint8_t>(bytes[i]);
+  return bits;
+}
+
+// Flipping the sign bit makes two's-complement integers sort correctly as
+// unsigned big-endian bytes, so InnoDB's key order matches numeric order.
+std::string encode_int(int64_t n) {
+  return big_endian(static_cast<uint64_t>(n) ^ (1ULL << 63));
+}
+
 int64_t decode_int(const std::string& bytes) {
-  uint64_t biased = 0;
-  for (int i = 0; i < 8; ++i) biased = (biased << 8) | static_cast<uint8_t>(bytes[i]);
-  return static_cast<int64_t>(biased ^ (1ULL << 63));
+  return static_cast<int64_t>(from_big_endian(bytes) ^ (1ULL << 63));
+}
+
+// IEEE-754 already sorts correctly as unsigned bytes for positive values once
+// the sign bit is set; negatives sort in reverse, so they are inverted whole.
+std::string encode_double(double d) {
+  uint64_t bits;
+  std::memcpy(&bits, &d, sizeof bits);
+  return big_endian((bits >> 63) ? ~bits : (bits | (1ULL << 63)));
+}
+
+double decode_double(const std::string& bytes) {
+  uint64_t bits = from_big_endian(bytes);
+  bits = (bits >> 63) ? (bits & ~(1ULL << 63)) : ~bits;
+  double d;
+  std::memcpy(&d, &bits, sizeof d);
+  return d;
 }
 
 }  // namespace
@@ -39,8 +64,19 @@ std::string encode_id(const bson_value_t& id) {
       return std::string(1, kTagInt) + encode_int(id.value.v_int32);
     case BSON_TYPE_INT64:
       return std::string(1, kTagInt) + encode_int(id.value.v_int64);
+    case BSON_TYPE_DOUBLE: {
+      // Every unadorned number from a JavaScript client is a double, so 1 and
+      // NumberLong(1) must land on the same key or `{_id: 1}` would insert
+      // twice. Only a value with a fractional part needs its own encoding.
+      const double d = id.value.v_double;
+      if (std::isfinite(d) && d == std::trunc(d) && d >= -9223372036854775808.0 &&
+          d < 9223372036854775808.0) {
+        return std::string(1, kTagInt) + encode_int(static_cast<int64_t>(d));
+      }
+      return std::string(1, kTagDouble) + encode_double(d);
+    }
     default:
-      throw type_mismatch("unsupported _id type — expected ObjectId, string, or integer");
+      throw type_mismatch("unsupported _id type — expected ObjectId, string, or number");
   }
 }
 
@@ -60,6 +96,9 @@ Value decode_id(const std::string& key) {
     case kTagInt:
       if (payload.size() != 8) throw bad_value("malformed integer _id key");
       return Value::from_int64(decode_int(payload));
+    case kTagDouble:
+      if (payload.size() != 8) throw bad_value("malformed double _id key");
+      return Value::from_double(decode_double(payload));
     default:
       throw bad_value("unknown _id key tag");
   }

@@ -83,6 +83,7 @@ public:
   }
 
   size_t remaining() const { return size_ - at_; }
+  size_t offset() const { return at_; }
   void skip(size_t n) {
     require(n);
     at_ += n;
@@ -101,6 +102,27 @@ private:
     if (size_ - at_ < n) throw failed_to_parse("wire message truncated");
   }
 };
+
+// A document sequence is logically the array field the driver lifted out of the
+// command, so folding it back in lets every command handler see one document.
+Bson fold_in_sequences(const Bson& body,
+                       const std::vector<std::pair<std::string, std::vector<Bson>>>& sequences) {
+  Bson merged;
+  bson_concat(merged.get(), body.get());
+  for (const auto& sequence : sequences) {
+    bson_t array;
+    bson_append_array_begin(merged.get(), sequence.first.c_str(),
+                            static_cast<int>(sequence.first.size()), &array);
+    for (uint32_t i = 0; i < sequence.second.size(); ++i) {
+      const char* key = nullptr;
+      char buffer[16];
+      const size_t length = bson_uint32_to_string(i, &key, buffer, sizeof buffer);
+      bson_append_document(&array, key, static_cast<int>(length), sequence.second[i].get());
+    }
+    bson_append_array_end(merged.get(), &array);
+  }
+  return merged;
+}
 
 }  // namespace
 
@@ -146,13 +168,37 @@ Request parse_request(const std::vector<uint8_t>& raw) {
     }
     if (flags & 0x1) cursor.trim(4);  // trailing CRC-32C, which we do not verify
 
-    uint8_t kind = cursor.byte();
-    if (kind != 0) {
-      // Document sequences carry bulk payloads; nothing in the handshake uses
-      // them, so refuse loudly instead of silently dropping the data.
-      throw not_implemented("OP_MSG document sequences are not supported yet");
+    bool have_body = false;
+    std::vector<std::pair<std::string, std::vector<Bson>>> sequences;
+    while (cursor.remaining() > 0) {
+      const uint8_t kind = cursor.byte();
+      if (kind == 0) {
+        if (have_body) throw failed_to_parse("OP_MSG carries more than one body section");
+        req.body = cursor.document();
+        have_body = true;
+        continue;
+      }
+      if (kind != 1) {
+        throw not_implemented("OP_MSG section kind " + std::to_string(kind) + " is unknown");
+      }
+      // Kind 1: int32 section size (counting itself), a cstring identifier, then
+      // documents packed until the section ends. Drivers put bulk insert,
+      // update and delete payloads here.
+      const size_t section_start = cursor.offset();
+      const int32_t section_size = cursor.int32_at_cursor();
+      if (section_size < 5) throw failed_to_parse("OP_MSG sequence length is impossible");
+      const size_t section_end = section_start + static_cast<size_t>(section_size);
+      std::vector<Bson> documents;
+      const std::string identifier = cursor.cstring();
+      while (cursor.offset() < section_end) documents.push_back(cursor.document());
+      if (cursor.offset() != section_end) {
+        throw failed_to_parse("OP_MSG sequence overruns its declared length");
+      }
+      sequences.emplace_back(identifier, std::move(documents));
     }
-    req.body = cursor.document();
+    if (!have_body) throw failed_to_parse("OP_MSG has no body section");
+    if (!sequences.empty()) req.body = fold_in_sequences(req.body, sequences);
+
     auto db = path_get(req.body.get(), {"$db"});
     if (db && db->type() == BSON_TYPE_UTF8) req.database = db->get().value.v_utf8.str;
     return req;

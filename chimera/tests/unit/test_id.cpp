@@ -58,9 +58,31 @@ TEST_CASE("integer key order is numeric order, so the InnoDB PK sorts correctly"
   CHECK(sorted == keys);
 }
 
+TEST_CASE("a whole double is the same key as the integer, because Mongo says they are equal") {
+  // Every unadorned number a JavaScript client sends is a double, so `{_id: 1}`
+  // from the shell and NumberLong(1) from a driver have to collide.
+  Value whole = id_of(R"({"_id": {"$numberDouble": "1.0"}})");
+  Value integer = id_of(R"({"_id": {"$numberLong": "1"}})");
+  CHECK(encode_id(whole.get()) == encode_id(integer.get()));
+}
+
+TEST_CASE("a fractional double gets its own key, ordered numerically") {
+  std::vector<double> numbers = {-1.5, -0.5, 0.5, 1.5, 1e30};
+  std::vector<std::string> keys;
+  for (double d : numbers) keys.push_back(encode_id(Value::from_double(d).get()));
+  std::vector<std::string> sorted = keys;
+  std::shuffle(sorted.begin(), sorted.end(), std::mt19937(1));
+  std::sort(sorted.begin(), sorted.end());
+  CHECK(sorted == keys);
+
+  Value fractional = id_of(R"({"_id": {"$numberDouble": "1.5"}})");
+  Value integer = id_of(R"({"_id": {"$numberLong": "1"}})");
+  CHECK(encode_id(fractional.get()) != encode_id(integer.get()));
+}
+
 TEST_CASE("unsupported id types are rejected, never mangled") {
-  Value floating = id_of(R"({"_id": {"$numberDouble": "1.5"}})");
-  CHECK_THROWS_AS(encode_id(floating.get()), TranslatorError);
+  Value boolean = id_of(R"({"_id": true})");
+  CHECK_THROWS_AS(encode_id(boolean.get()), TranslatorError);
   CHECK_THROWS_AS(decode_id(""), TranslatorError);
   CHECK_THROWS_AS(decode_id(std::string(1, '\x99')), TranslatorError);
 }

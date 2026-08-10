@@ -36,6 +36,9 @@ MYSQL_ADD_PLUGIN(chimera_mongo
   listener.cc
   wire.cc
   commands.cc
+  sql.cc
+  collection.cc
+  cursor.cc
   MODULE_ONLY
   COMPONENT Server
   LINK_LIBRARIES ${CHIMERA_TRANSLATOR_LIB} ${CHIMERA_BSON_LIBRARIES}
@@ -47,4 +50,12 @@ MYSQL_ADD_PLUGIN(chimera_mongo
 # structs, and it means no server tree is ever patched (ground rule 2).
 IF(TARGET chimera_mongo)
   SET_TARGET_PROPERTIES(chimera_mongo PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+
+  # mysys symbols (my_thread_init, my_thread_end) live in the mariadbd binary,
+  # not in any library a plugin can link. Apple's linker stopped implying
+  # dynamic lookup for bundles, so say it outright; dyld resolves them against
+  # the host executable at load time, exactly as it does on ELF platforms.
+  IF(APPLE)
+    TARGET_LINK_OPTIONS(chimera_mongo PRIVATE -Wl,-undefined,dynamic_lookup)
+  ENDIF()
 ENDIF()

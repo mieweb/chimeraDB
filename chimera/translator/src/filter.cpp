@@ -35,9 +35,7 @@ private:
   std::string doc_;
   std::vector<Param> params_;
 
-  std::string value_expr(const Path& path) {
-    return "JSON_VALUE(" + doc_ + ",'" + to_json_path(path) + "')";
-  }
+  std::string value_expr(const Path& path) { return scalar_expr(path, doc_); }
 
   std::string extract_expr(const Path& path) {
     return "JSON_EXTRACT(" + doc_ + ",'" + to_json_path(path) + "')";
@@ -50,6 +48,13 @@ private:
       case BSON_TYPE_INT32: params_.push_back({static_cast<int64_t>(v.value.v_int32)}); break;
       case BSON_TYPE_INT64: params_.push_back({v.value.v_int64}); break;
       case BSON_TYPE_DOUBLE: params_.push_back({v.value.v_double}); break;
+      case BSON_TYPE_DATE_TIME: params_.push_back({v.value.v_datetime}); break;
+      case BSON_TYPE_OID: {
+        char oid[25];
+        bson_oid_to_string(&v.value.v_oid, oid);
+        params_.push_back({std::string(oid)});
+        break;
+      }
       case BSON_TYPE_UTF8:
         params_.push_back({std::string(v.value.v_utf8.str, v.value.v_utf8.len)});
         break;
@@ -66,7 +71,9 @@ private:
 
   // JSON_VALUE returns text; numeric comparisons must compare as numbers.
   std::string comparable(const Path& path, const bson_value_t& against) {
-    if (value_is_numeric(against)) return "CAST(" + value_expr(path) + " AS DOUBLE)";
+    if (value_is_numeric(against) || against.value_type == BSON_TYPE_DATE_TIME) {
+      return "CAST(" + value_expr(path) + " AS DOUBLE)";
+    }
     return value_expr(path);
   }
 
@@ -205,11 +212,34 @@ private:
       }
       return "JSON_CONTAINS(" + extract_expr(path) + ", " + bind_string(to_extjson(&view)) + ")";
     }
-    throw not_implemented("unsupported filter operator '" + op + "'");
+    // MongoDB does not distinguish "unimplemented" from "misspelled" for a
+    // query operator it has never heard of; both are BadValue.
+    throw bad_value("unknown operator: " + op);
   }
 };
 
 }  // namespace
+
+std::string scalar_expr(const Path& path, const std::string& doc_column) {
+  // JSON_VALUE returns NULL for a non-scalar, and in canonical extJSON every
+  // non-string scalar *is* an object: 30 is stored as {"$numberInt":"30"}. So
+  // reach for the bare value first, then through each wrapper we can compare
+  // meaningfully. The first non-NULL wins, which is unambiguous because a given
+  // value has exactly one encoding.
+  static const char* const kWrappers[] = {
+      "",  // strings, booleans, and JSON null
+      R"(."$numberInt")", R"(."$numberLong")", R"(."$numberDouble")",
+      R"(."$date"."$numberLong")",  // dates compare as epoch milliseconds
+      R"(."$oid")",
+  };
+  const std::string base = to_json_path(path);
+  std::string out = "COALESCE(";
+  for (size_t i = 0; i < sizeof kWrappers / sizeof kWrappers[0]; ++i) {
+    if (i > 0) out += ",";
+    out += "JSON_VALUE(" + doc_column + ",'" + base + kWrappers[i] + "')";
+  }
+  return out + ")";
+}
 
 SqlFilter compile_filter(const bson_t* filter, const std::string& doc_column) {
   Compiler compiler(doc_column);

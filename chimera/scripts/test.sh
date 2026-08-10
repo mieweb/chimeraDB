@@ -33,4 +33,9 @@ chimera_require_running
 note "=== Mongo wire protocol on $SERVER_VERSION ==="
 "$CHIMERA_DIR/scripts/demo-m3.sh" --server "$SERVER_VERSION"
 
+# The referee: every command surface is replayed against a real mongod and the
+# two transcripts must be identical.
+note "=== differential vs MongoDB on $SERVER_VERSION ==="
+"$CHIMERA_DIR/tests/differential/run.sh" --server "$SERVER_VERSION"
+
 note "all layers green on $SERVER_VERSION"
