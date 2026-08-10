@@ -100,16 +100,31 @@ patches) is honored. A package build has no server tree.
 | Cross-arch | **Impractical** — a full server build under qemu for the foreign arch is not a thing anyone will wait for | Cheap enough that qemu is tolerable, native runners better |
 | Risk | Low technical risk, high friction | Must reproduce `MYSQL_ADD_PLUGIN`'s defines by hand (`MYSQL_DYNAMIC_PLUGIN`, and the `MYSQL_SERVER` exposure that [M7.2](chimeraDB-plan.md#milestone-7--cross-language-ergonomics) confined to `mongogateway_udf.cc`) |
 
-- [ ] **M9.1.1** Spike: does Debian's `libmariadbd-dev` actually ship the server plugin
+- [x] **M9.1.1** Spike: does Debian's `libmariadbd-dev` actually ship the server plugin
   headers (`mysql/plugin.h`, `mysql/service_sql.h` — M4.1 depends on the SQL service) for
   **both** 10.11 and the MariaDB.org 11.8 packages? Answer decides whether B is even
   available. Record the answer here either way.
-- [ ] **M9.1.2** Same question for Homebrew's MariaDB kegs (M9.3 needs it too — one spike,
+
+  > **Yes, both.** `libmariadbd-dev 1:10.11.18-0+deb12u1` (bookworm) and
+  > `libmariadbd-dev 1:11.8.8+maria~deb12` (deb.mariadb.org, arm64 present) each install
+  > `/usr/include/mariadb/server/mysql/plugin.h` and `.../service_sql.h`. Note the path:
+  > the *server* headers live under a `server/` subdirectory that the client headers do not
+  > use, so an include path of `/usr/include/mariadb` alone finds the wrong ones.
+- [x] **M9.1.2** Same question for Homebrew's MariaDB kegs (M9.3 needs it too — one spike,
   two consumers).
-- [ ] **M9.1.3** **Decision** (record it as a locked decision, D11): A, B, or B-with-A-as-CI-referee.
+
+  > **Yes**, at `<keg>/include/mysql/server/mysql/{plugin,service_sql}.h`. The spike also
+  > answers M9.3.2 for free: `mariadb@10.11` and `mariadb@11.8` both exist as formulae, so
+  > the tap never has to fetch its own server tarball.
+- [x] **M9.1.3** **Decision** (record it as a locked decision, D11): A, B, or B-with-A-as-CI-referee.
   Recommendation: **B**, keeping A as the developer path, plus a CI job that builds both and
   diffs the resulting module's undefined-symbol set. Without that referee, path B rots
   silently and the first person to notice is a user whose server won't start.
+
+  > **D11 locked as recommended** — see [chimeraDB-plan.md § Locked decisions](chimeraDB-plan.md#locked-decisions).
+  > M9.1.1/M9.1.2 removed the only thing that could have forced A: the headers are there on
+  > every target. The referee is what makes B safe to ship, so it is not optional — it is
+  > M9.6.2's job and blocks the first release, not a nice-to-have.
 - [ ] **M9.1.4** Whatever is chosen, the plugin ABI is tied to a server series. Packages are
   per-series; there is no "works on any MariaDB" artifact. Encode that in names and
   dependencies (M9.2), not in a README caveat.
