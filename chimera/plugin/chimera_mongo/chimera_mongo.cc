@@ -5,7 +5,6 @@
 #include <my_global.h>
 #include <mysql_version.h>
 #include <mysql/plugin.h>
-#include <sql_plugin.h>   // st_plugin_int, whose `data` field holds our listener
 
 #include <memory>
 #include <string>
@@ -21,6 +20,10 @@ static unsigned long long chimera_mongo_oplog_max_rows_value = 0;
 static unsigned long long chimera_mongo_oplog_max_age_value = 0;
 static char chimera_mongo_sql_writes_value = 0;
 static char chimera_mongo_insecure_bind_value = 0;
+// A daemon plugin is a singleton, so file scope holds these as well as the
+// plugin handle would — and without <sql_plugin.h>, which is server-internal and
+// not shipped in any -dev package (D11).
+static std::unique_ptr<chimera::Listener> chimera_mongo_listener;
 static std::unique_ptr<chimera::OplogPruner> chimera_mongo_pruner;
 
 // Loopback by default and, since #5 stage 1, enforced: init refuses a
@@ -73,7 +76,7 @@ static struct st_mysql_sys_var *chimera_mongo_system_variables[] = {
   nullptr
 };
 
-static int chimera_mongo_init(void *p)
+static int chimera_mongo_init(void *)
 {
   const char *bind_address =
       chimera_mongo_bind_value ? chimera_mongo_bind_value : "127.0.0.1";
@@ -118,20 +121,18 @@ static int chimera_mongo_init(void *p)
   chimera_mongo_pruner= std::make_unique<chimera::OplogPruner>(
       &chimera_mongo_oplog_max_rows_value, &chimera_mongo_oplog_max_age_value);
 
-  static_cast<struct st_plugin_int *>(p)->data= listener.release();
+  chimera_mongo_listener= std::move(listener);
   return 0;
 }
 
-static int chimera_mongo_deinit(void *p)
+static int chimera_mongo_deinit(void *)
 {
-  auto *plugin= static_cast<struct st_plugin_int *>(p);
   // Stop the pruner before the listener: it holds a session of its own, and
   // joining it first means no thread outlives the plugin's SQL access.
   chimera_mongo_pruner.reset();
   // The destructor stops accepting, unblocks every connection thread and joins
   // them, so the server shuts down with no threads left behind.
-  delete static_cast<chimera::Listener *>(plugin->data);
-  plugin->data= nullptr;
+  chimera_mongo_listener.reset();
   return 0;
 }
 

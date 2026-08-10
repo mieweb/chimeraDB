@@ -144,16 +144,36 @@ patches) is honored. A package build has no server tree.
 
   > **Yes**, at `<keg>/include/mysql/server/mysql/{plugin,service_sql}.h`. The spike also
   > answers M9.3.2 for free: `mariadb@10.11` and `mariadb@11.8` both exist as formulae, so
-  > the tap never has to fetch its own server tarball.
+  > the tap never has to fetch its own server tarball. (M9.1.3 then found that shipped
+  > headers are not sufficient, which changes what the formula does with this — but the
+  > formula question of *which* server to depend on is settled.)
 - [x] **M9.1.3** **Decision** (record it as a locked decision, D11): A, B, or B-with-A-as-CI-referee.
   Recommendation: **B**, keeping A as the developer path, plus a CI job that builds both and
   diffs the resulting module's undefined-symbol set. Without that referee, path B rots
   silently and the first person to notice is a user whose server won't start.
 
-  > **D11 locked as recommended** — see [chimeraDB-plan.md § Locked decisions](chimeraDB-plan.md#locked-decisions).
-  > M9.1.1/M9.1.2 removed the only thing that could have forced A: the headers are there on
-  > every target. The referee is what makes B safe to ship, so it is not optional — it is
-  > M9.6.2's job and blocks the first release, not a nice-to-have.
+  > **D11 locked as A, restricted to the plugin target** — the recommendation did not
+  > survive the attempt. See [chimeraDB-plan.md § Locked decisions](chimeraDB-plan.md#locked-decisions).
+  >
+  > **B is not available.** The headers are all there (M9.1.1), and ten of the eleven plugin
+  > sources compiled cleanly against them. The eleventh does not:
+  > [mongogateway_udf.cc](chimera/plugin/chimera_mongo/mongogateway_udf.cc) includes
+  > `sql_class.h` to read `current_thd->db` — the database a SQL caller is already in, which
+  > is what `mongo('db.parts.find(…)')` means by "here". `sql_class.h` is server-internal and
+  > in no package, and `mysql/plugin.h` exposes nothing equivalent: it hands out
+  > `thd_sql_command`, `thd_tx_isolation`, `thd_get_thread_id`, and no way to ask what schema
+  > the session is in. `libmysqlservices.a` is missing too, but that one is a five-line shim.
+  > (`chimera_mongo.cc`'s `sql_plugin.h` include *was* removable and has been removed — the
+  > listener now lives in a file-scope pointer beside the pruner, so the module's exposure to
+  > server internals is one file rather than two.)
+  >
+  > **A is far cheaper than this table claims.** "Whole MariaDB tree per series per arch"
+  > conflated *configuring* the tree with *building the server*. Building only the
+  > `chimera_mongo` target from an empty build directory pulls mysys, strings and `GenError`
+  > — **222 targets, 19 seconds** on Debian arm64. The cross-arch objection goes with it.
+  >
+  > The referee is therefore deleted rather than built. Two build paths needed a diff to stay
+  > honest; one build path is honest because it is one object.
 - [ ] **M9.1.4** Whatever is chosen, the plugin ABI is tied to a server series. Packages are
   per-series; there is no "works on any MariaDB" artifact. Encode that in names and
   dependencies (M9.2), not in a README caveat.

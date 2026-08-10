@@ -20,3 +20,8 @@ Each `dev.sh` call is one container: a server started by one call is gone by the
 server and the scripts that talk to it belong in the same invocation. Build products go to a
 named volume (`CHIMERA_OUT=/out`), never into the bind-mounted checkout, so a container build
 and the host's macOS build coexist.
+
+One thing they cannot share: [link-plugin.sh](../scripts/link-plugin.sh) writes an *absolute*
+symlink into the server trees, which are bind-mounted. Whichever platform ran it last owns
+the link, and the other sees it dangling. Re-running the script fixes it, and every build
+script does.
