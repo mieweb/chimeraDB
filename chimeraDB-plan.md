@@ -274,28 +274,42 @@ ergonomics, and a future data-migration bridge. Skippable without affecting late
 **Goal:** the shared brain used later by both the wire plugin and the UDF gateway.
 Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 
-- [ ] **M2.1** Scaffold `chimera/translator/` (CMake, pkg-config for libbson — support both
+- [x] **M2.1** Scaffold `chimera/translator/` (CMake, pkg-config for libbson — support both
   1.x and 2.x pkg names) + a unit-test target (single-header framework such as doctest).
-- [ ] **M2.2** **Codec module:** BSON ⇄ canonical Extended JSON using libbson's built-ins
+- [x] **M2.2** **Codec module:** BSON ⇄ canonical Extended JSON using libbson's built-ins
   (`bson_as_canonical_extended_json` / `bson_new_from_json`). Round-trip tests covering
   ObjectId, Date, Timestamp, Decimal128, Binary, nested arrays.
-- [ ] **M2.3** **`_id` canonicalization:** ObjectId | string | int → deterministic bytes for
+- [x] **M2.3** **`_id` canonicalization:** ObjectId | string | int → deterministic bytes for
   the `VARBINARY(255)` PK, and back. Covers Meteor random-string ids *and*
   `idGeneration:'MONGO'` ObjectIds. Property test: encode→decode is identity; ordering is stable.
-- [ ] **M2.4** **Filter compiler** (Meteor/minimongo subset): implicit `$eq`, `$gt/$gte/$lt/$lte/$ne`,
+- [x] **M2.4** **Filter compiler** (Meteor/minimongo subset): implicit `$eq`, `$gt/$gte/$lt/$lte/$ne`,
   `$in/$nin`, `$and/$or/$not`, `$exists`, `$regex`, basic `$elemMatch` → parameterized SQL
   `WHERE` over `JSON_VALUE`/`JSON_EXTRACT`/`JSON_CONTAINS` on `doc`. Unsupported operator ⇒
   clean, specific error (fail fast; no silent wrong answers). Every generated fragment uses
   bind parameters — **no string interpolation of user values** (injection surface).
-- [ ] **M2.5** **Update engine** (per D6): apply `$set/$unset/$inc/$push/$pull/$addToSet/$pop`
+
+  > **Correction (2026-08-10):** two implementation realities the plan did not anticipate.
+  > (a) `$regex` never arrives as an operator document — both libbson's extJSON parser and
+  > the drivers encode `{name: /^Do/}` and `{"$regex": "^Do"}` as a **BSON regex value** in
+  > the field position, so the *equality* path has to recognize `BSON_TYPE_REGEX` and emit
+  > `REGEXP`. The `$regex` operator branch is kept for clients that send it explicitly.
+  > (b) The array-containment half of an equality test cannot bind the value as plain JSON:
+  > the document is stored as *canonical* extJSON, so `1` on disk is `{"$numberInt":"1"}`.
+  > The containment candidate is serialized through libbson in the same encoding.
+
+- [x] **M2.5** **Update engine** (per D6): apply `$set/$unset/$inc/$push/$pull/$addToSet/$pop`
   (positional `$` deferred to backlog) to a BSON doc **in memory**; returns new doc + a
   changed-fields summary (used by the oplog writer in M5). Unit tests mirror MongoDB's
   documented semantics for each operator, including edge cases (missing paths, arrays).
-- [ ] **M2.6** Hygiene gate: `chimera/scripts/check-hygiene.sh` — fails if anything under
+- [x] **M2.6** Hygiene gate: `chimera/scripts/check-hygiene.sh` — fails if anything under
   `chimera/` includes or references `mongodb/src` (rule 1). Wire into `test.sh`.
 
 **Exit criteria:**
-- [ ] `ctest` green; hygiene gate green. (Server-independent — no dual-version matrix here.)
+- [x] `ctest` green; hygiene gate green. (Server-independent — no dual-version matrix here.)
+
+**Status:** COMPLETE ✅ (2026-08-10) — 32 ctest cases green; hygiene gate green and
+negative-tested (a planted `mongodb/src` include makes it fail). `test.sh --server <v>` now
+runs hygiene + unit tests + the SQL layer, green on 10.11 and 11.8.
 
 ---
 

@@ -81,6 +81,20 @@ become invalid JSON no matter which head writes it. Only the catalog
 ([sql/catalog.sql](sql/catalog.sql)) records that the table is a collection; everything else
 about it is already in `information_schema`.
 
+The key bytes are a one-byte type tag followed by the id itself
+([translator/src/id.cpp](translator/src/id.cpp)):
+
+| Tag | Id type | Encoding |
+|---|---|---|
+| `0x07` | ObjectId | the 12 raw bytes, unchanged |
+| `0x02` | string | UTF-8 bytes (Meteor's default random ids) |
+| `0x12` | integer | 8 bytes, big-endian, sign bit flipped |
+
+Big-endian with a flipped sign bit makes byte order *be* numeric order, so the InnoDB
+primary key sorts integer ids correctly. `int32` and `int64` share one tag deliberately:
+`1` and `NumberLong(1)` must be the same key, or a collection could hold two documents
+Mongo considers duplicates. The cost is that an integral id decodes back as `int64`.
+
 Extended JSON's type wrappers are just more JSON, so their `$`-prefixed keys are reachable
 with quoted path members — a canonical date lives at
 `$.createdAt."$date"."$numberLong"`.
