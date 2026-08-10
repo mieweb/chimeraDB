@@ -219,36 +219,53 @@ ergonomics, and a future data-migration bridge. Skippable without affecting late
 
 **Goal:** prove the storage model end-to-end with plain SQL on both versions.
 
-- [ ] **M1.1** Write `chimera/sql/catalog.sql`:
-  - `CREATE DATABASE IF NOT EXISTS chimera_meta;`
-  - `chimera_meta.collections(db_name, coll_name, projection_mode ENUM('manual','eager','lazy') DEFAULT 'manual', created_at, PRIMARY KEY(db_name, coll_name))`
-- [ ] **M1.2** Document the collection table convention in `chimera/README.md`:
-  - Mongo database ⇒ MariaDB database; collection ⇒ table.
-  - `CREATE TABLE <db>.<coll> (_id VARBINARY(255) NOT NULL PRIMARY KEY, doc JSON NOT NULL) ENGINE=InnoDB;`
-    (MariaDB's `JSON` alias adds the `JSON_VALID` check automatically.)
-  - `_id` holds the canonical byte form produced by the translator (M2); for now use plain strings.
-- [ ] **M1.3** Write `chimera/scripts/demo-m1.sh --server <v>` executing this walkthrough
-  and asserting each result:
-  - [ ] create a `test.users` collection table + catalog row
-  - [ ] insert two extJSON documents (one with `{"$date": ...}` field)
-  - [ ] update one via `UPDATE … SET doc = JSON_SET(doc, '$.age', 31)`
-  - [ ] `ALTER TABLE test.users ADD COLUMN email VARCHAR(190) AS (JSON_VALUE(doc,'$.email')) PERSISTENT, ADD INDEX(email);`
-        — then `SELECT email FROM test.users` proves the **backfill happened during the ALTER** (D3)
-  - [ ] add a `VIRTUAL` + indexed column too; note no rebuild occurred
-  - [ ] prove drift is impossible: `UPDATE test.users SET email='x'` → error (generated column)
-  - [ ] type-mismatch probe (D8): declare an `INT` projection over a string path → NULL + warning captured
-  - [ ] nested/typed path example: `JSON_VALUE(doc, '$.createdAt."$date"')` extracts the extJSON date
-- [ ] **M1.4** Bidirectional write-through prototype (D10), hand-rolled: make `name` a
-  **real** `VARCHAR(190)` column plus a `BEFORE UPDATE` trigger — if `doc` changed,
-  recompute `name` from it; otherwise if `name` changed, `JSON_SET` it into `doc`
-  (doc wins when both change in one statement). Acceptance is literally the README
-  example: `UPDATE test.users SET name = 'Douglas Horner' WHERE email = 'doug@example.com';`
-  then assert `JSON_VALUE(doc, '$.name')` changed with it. Add to `demo-m1.sh`.
-- [ ] **M1.5** Run the demo against **both** servers and fix any 10.11/11.8 divergence found
-  (record divergences in `chimera/README.md`).
+- [x] **M1.1** ✅ [chimera/sql/catalog.sql](chimera/sql/catalog.sql) — idempotent
+  `chimera_meta` database + `collections(db_name, coll_name, projection_mode, created_at)`.
+- [x] **M1.2** ✅ Collection table convention documented in
+  [chimera/README.md § The storage model, exactly](chimera/README.md#the-storage-model-exactly):
+  Mongo database ⇒ MariaDB database, collection ⇒ table,
+  `(_id VARBINARY(255) PK, doc JSON NOT NULL) ENGINE=InnoDB`, why `VARBINARY`, and how
+  extJSON `$`-prefixed keys are reached with quoted path members.
+- [x] **M1.3** ✅ [chimera/scripts/demo-m1.sh](chimera/scripts/demo-m1.sh) `--server <v>`
+  executes the walkthrough and asserts every result:
+  - [x] create a `test.users` collection table + catalog row
+  - [x] insert two extJSON documents (one with a canonical `{"$date":{"$numberLong":…}}` field)
+  - [x] update one via `UPDATE … SET doc = JSON_SET(doc, '$.age', 31)`
+  - [x] `ALTER TABLE test.users ADD COLUMN email VARCHAR(190) AS (JSON_VALUE(doc,'$.email')) PERSISTENT, ADD INDEX(email);`
+        — `SELECT email` proves the **backfill happened during the ALTER** (D3). Sharpened
+        into a positive proof: the same ALTER with `ALGORITHM=INSTANT` is *rejected*
+        (`ERROR 1845`) precisely because every existing row must be materialized.
+  - [x] added a `VIRTUAL` + indexed column too — no-rebuild asserted directly, since
+        `ALGORITHM=INSTANT` **succeeds** for it
+  - [x] drift is impossible: `UPDATE test.users SET email='x'` → `ERROR 1906`
+  - [x] type-mismatch probe (D8) — see correction below
+  - [x] nested/typed path: `JSON_VALUE(doc, '$.createdAt."$date"."$numberLong"')`
+
+  > **Correction (2026-08-10) — D8:** the plan predicted a type mismatch yields
+  > "`JSON_VALUE` → NULL + warning". Measured on both servers, neither half is right by
+  > default. Under MariaDB's **default** `sql_mode` (`STRICT_TRANS_TABLES,…`) the projection
+  > `ALTER` **fails outright** with `ERROR 1366 Incorrect integer value`. Only with a
+  > permissive `sql_mode` does it downgrade to *warning* 1366 — and the stored value is
+  > MariaDB's ordinary coercion (`'Doug'` → **`0`**), not `NULL`. So D8's "permissive by
+  > default" is really "permissive if the DBA's `sql_mode` is permissive"; ChimeraDB adds
+  > no policy of its own here. The demo asserts both branches, and the strict-mode failure
+  > is arguably the better default — a bad projection is caught at DDL time rather than
+  > silently storing zeros.
+- [x] **M1.4** ✅ Bidirectional write-through prototype (D10), hand-rolled: `name` is a
+  **real** `VARCHAR(190)` column plus `BEFORE INSERT`/`BEFORE UPDATE` triggers — if `doc`
+  changed, recompute `name` from it; otherwise if `name` changed, `JSON_SET` it into `doc`
+  (doc wins when both change in one statement). Acceptance is literally the README example:
+  `UPDATE test.users SET name = 'Douglas Horner' WHERE email = 'doug@example.com';` then
+  `JSON_VALUE(doc, '$.name')` changed with it. All four cases (write-through, doc-wins,
+  both-changed, insert) asserted in `demo-m1.sh`.
+- [x] **M1.5** ✅ Demo run against **both** servers — **zero divergence**: identical output,
+  identical error numbers (1845 / 1906 / 1366) on 10.11.18 and 11.8.8. Nothing to record
+  in `chimera/README.md` beyond the shared behaviors already documented there.
 
 **Exit criteria:**
-- [ ] `demo-m1.sh` green on 10.11 and 11.8.
+- [x] ✅ `demo-m1.sh` green on 10.11 and 11.8.
+
+**Status:** COMPLETE ✅ (2026-08-10).
 
 ---
 

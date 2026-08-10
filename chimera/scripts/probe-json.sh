@@ -10,7 +10,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 chimera_parse_server "$@"
 ((${#CHIMERA_ARGS[@]} == 0)) || die "unknown argument '${CHIMERA_ARGS[0]}'"
-chimera_is_running || die "$SERVER_VERSION not running — start it with run-server.sh --server $SERVER_VERSION"
+chimera_require_running
 
 note "JSON_VALUE nested path extraction"
 got=$(chimera_sql -N -B -e "SELECT JSON_VALUE('{\"a\":{\"b\":2}}','\$.a.b');")

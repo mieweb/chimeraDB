@@ -60,4 +60,48 @@ reactively, oplog tailing and all.
 
 ---
 
+## The storage model, exactly
+
+The [root README](../README.md#what-it-is) explains *why* a collection is a table. This is
+*what* that means in DDL — the convention every later milestone writes against.
+
+A Mongo database is a MariaDB database; a collection is a table:
+
+```sql
+CREATE TABLE <db>.<coll> (
+  _id VARBINARY(255) NOT NULL PRIMARY KEY,   -- canonical id bytes from the translator (M2.3)
+  doc JSON NOT NULL                          -- the whole document, canonical Extended JSON (D5)
+) ENGINE=InnoDB;
+```
+
+`_id` is `VARBINARY` because Mongo ids are not all strings — ObjectIds are 12 raw bytes,
+and binary comparison gives one deterministic ordering for every id type. MariaDB's `JSON`
+is an alias for `LONGTEXT` plus an automatic `JSON_VALID` check constraint, so `doc` cannot
+become invalid JSON no matter which head writes it. Only the catalog
+([sql/catalog.sql](sql/catalog.sql)) records that the table is a collection; everything else
+about it is already in `information_schema`.
+
+Extended JSON's type wrappers are just more JSON, so their `$`-prefixed keys are reachable
+with quoted path members — a canonical date lives at
+`$.createdAt."$date"."$numberLong"`.
+
+Projections come in two directions (D3/D10):
+
+| Direction | DDL | Guarantee |
+|---|---|---|
+| `forward` (default) | `ADD COLUMN c … AS (JSON_VALUE(doc,'$.path')) PERSISTENT \| VIRTUAL` | Engine-enforced. Direct writes are rejected (`ERROR 1906`), so the column physically cannot drift |
+| `bidirectional` | real column + `BEFORE INSERT`/`BEFORE UPDATE` triggers | `UPDATE t SET c = …` is written through into `doc`; if one statement changes both, the document wins |
+
+Two behaviors worth knowing before you design a projection, both demonstrated by
+[scripts/demo-m1.sh](scripts/demo-m1.sh):
+
+- **`PERSISTENT` cannot be added with `ALGORITHM=INSTANT`** (`ERROR 1845`). That refusal is
+  the feature: the table rebuild is what materializes the column for every existing
+  document. `VIRTUAL` columns *are* instant, because nothing is stored.
+- **Type mismatches follow `sql_mode`, not a ChimeraDB policy.** Under MariaDB's default
+  strict mode the `ALTER` fails outright; under a permissive `sql_mode` you get warning
+  1366 and MariaDB's ordinary coercion.
+
+---
+
 Milestone plan and the decisions behind all of this: [chimeraDB-plan.md](../chimeraDB-plan.md).

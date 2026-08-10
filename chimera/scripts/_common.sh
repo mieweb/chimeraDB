@@ -62,3 +62,27 @@ chimera_sql() {
 chimera_is_running() {
   [[ -f $PIDFILE ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
 }
+
+chimera_require_running() {
+  chimera_is_running || die "$SERVER_VERSION not running — start it with run-server.sh --server $SERVER_VERSION"
+}
+
+# --- assertions shared by every demo/test script -----------------------------
+
+# Single scalar result of a query, unquoted and untabulated.
+sql_scalar() { chimera_sql -N -B -e "$1"; }
+
+check_eq() { # check_eq <label> <actual> <expected>
+  [[ $2 == "$3" ]] || die "$1: expected '$3', got '$2'"
+  printf '  ok  %s = %s\n' "$1" "$2"
+}
+
+check_sql_error() { # check_sql_error <label> <expected-errno> <sql>
+  local out
+  if out=$(chimera_sql -e "$3" 2>&1); then
+    die "$1: expected ERROR $2, but the statement succeeded"
+  fi
+  [[ $out == *"ERROR $2"* ]] || die "$1: expected ERROR $2, got: $out"
+  printf '  ok  %s rejected with ERROR %s\n' "$1" "$2"
+}
+
