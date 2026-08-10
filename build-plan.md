@@ -66,8 +66,10 @@ Same toolchain recipe as Track A — only the source tree differs.
 - [x] **A2.1 Clone** ✅ `mariadb-10.11/` at `mariadb-10.11.18` (latest 10.11 patch), submodules initialized
 - [x] **A2.2 Configure** ✅ same CMake+Ninja flags as A3 (SDK sysroot, brew OpenSSL/bison,
   ColumnStore & RocksDB off, explicit `LIBXML2_INCLUDE_DIR`/`ZLIB_INCLUDE_DIR`)
-- [ ] **A2.3 Build** background job (`-j12`), log at `mariadb-10.11-build.log`
-- [ ] **A2.4 Verify** `build/sql/mariadbd --version`, `build/client/mariadb --version`
+- [x] **A2.3 Build** ✅ completed 2026-08-10, 1947/1947 targets, background job (`-j12`), zero failures
+- [x] **A2.4 Verify** ✅ `mariadbd Ver 10.11.18-MariaDB for osx10.21 on arm64`; `mariadb` client `15.1`
+
+**Track A2 status: COMPLETE ✅ (2026-08-10)** — built first try, no source patches needed.
 
 **Exit criteria:** `mariadbd` reports `10.11.18-MariaDB`.
 
@@ -166,6 +168,8 @@ Common failure modes:
   |---|---|---|---|
   | `mariadbd` | `mariadb-server/build/sql/mariadbd` | `11.8.8-MariaDB` (`osx10.21`, arm64) | 23M |
   | `mariadb` (client) | `mariadb-server/build/client/mariadb` | client `15.2` | 5.1M |
+  | `mariadbd` (10.11 LTS) | `mariadb-10.11/build/sql/mariadbd` | `10.11.18-MariaDB` (`osx10.21`, arm64) | 22M |
+  | `mariadb` (10.11 client) | `mariadb-10.11/build/client/mariadb` | client `15.1` | 5.0M |
   | `mongod` | `mongodb/build/install/bin/mongod` | `8.0.12` (`b3376e3af`, aarch64) | 244M |
   | `mongo` (legacy shell client) | `mongodb/build/install/bin/mongo` | `8.0.12` | 80M |
 
