@@ -1,0 +1,41 @@
+# The part of chimera/scripts/test.sh that CI can run today.
+#
+# Script-first: every step is one line that a developer runs the same way. The
+# server-dependent layers are missing on purpose, not by oversight — they need a
+# MongoDB oracle built for Linux, which this checkout does not have
+# (release-plan.md M9.0.3, correction 4). M9.6.1 finishes this file.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  server-independent:
+    name: hygiene + translator (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runs-on: ubuntu-24.04
+          - arch: arm64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build pkg-config libbson-dev doctest-dev
+
+      # Ground rule 1. It has been a script since M0 and has never run anywhere
+      # but a developer's machine, which is the opposite of a gate.
+      - name: hygiene
+        run: ./chimera/scripts/check-hygiene.sh
+
+      - name: translator unit tests
+        run: ./chimera/scripts/build-translator.sh

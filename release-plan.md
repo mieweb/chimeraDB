@@ -103,7 +103,8 @@ Not a formality. Three concrete things are macOS-only today:
   `demo-projection` — every D3, D8 and D10 assertion, identical to macOS.
 
 - [ ] **M9.0.4** Same on arm64 **and** amd64 (see M9.1 on why the arch matters this early).
-  arm64 done as far as Correction 4 allows; amd64 not attempted.
+  arm64 done as far as Correction 4 allows; on amd64 (emulated) hygiene and all 73 translator
+  tests pass, and the server layers are untried.
 
 **Exit criteria:** `test.sh` green for 10.11 and 11.8 inside a Debian container, on both
 architectures, with no source changes made outside `chimera/`.
@@ -306,6 +307,12 @@ where the bugs live.
 Packaging without CI means release artifacts built by hand on one Mac.
 
 - [ ] **M9.6.1** `test.yml`: the M0–M7 pyramid, both series, on Linux (uses M9.0's image).
+
+  > Started: [.github/workflows/test.yml](.github/workflows/test.yml) runs hygiene and the
+  > translator unit tests on amd64 and arm64. Those are the two layers that need no MariaDB
+  > and no oracle, so they are exactly what CI can run before M9.0.3's correction 4 is
+  > resolved. Verified by running the same two commands in the container on both
+  > architectures — 73/73 each.
 - [ ] **M9.6.2** `package.yml`: builds every artifact in M9.2–M9.4 and runs M9.5 on each.
 - [ ] **M9.6.3** `release.yml`: on tag, publishes `.deb`s to GitHub Releases, pushes the
   Docker manifest, bumps the tap. Plain files on a release first; an APT repository with
@@ -313,7 +320,9 @@ Packaging without CI means release artifacts built by hand on one Mac.
   downloaded `.deb` is honest in the meantime.
 - [ ] **M9.6.4** Native arm64 runners where available rather than qemu; every workflow stays
   a thin wrapper over `chimera/packaging/*.sh` so a failure is reproducible locally.
-- [ ] **M9.6.5** Wire in [check-hygiene.sh](chimera/scripts/check-hygiene.sh) — the SSPL
+  `test.yml` already does both: `ubuntu-24.04-arm` for arm64, and every step is one command
+  a developer runs identically.
+- [x] **M9.6.5** Wire in [check-hygiene.sh](chimera/scripts/check-hygiene.sh) — the SSPL
   grep of ground rule 1 is a CI check that has never run in CI.
 
 ---
