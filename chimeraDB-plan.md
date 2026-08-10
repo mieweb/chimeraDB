@@ -115,8 +115,10 @@ Dev port conventions (so everything can run simultaneously):
 > | 10.11 LTS | `mariadb-10.11/` | `mariadb-10.11/build/sql/mariadbd` | `10.11.18-MariaDB` (client `15.1`) |
 > | oracle | `mongodb/` | `mongodb/build/install/bin/mongod` + `bin/mongo` | `8.0.12` |
 
-- [ ] **M0.1** Create the `chimera/` directory skeleton above with a `README.md` explaining
-  the folder's organizing principle (one paragraph per subdirectory).
+- [x] **M0.1** ✅ Created the `chimera/` directory skeleton above with a
+  [README.md](chimera/README.md) explaining the folder's organizing principle (one paragraph
+  per subdirectory). Empty leaves carry a `.gitkeep` until their milestone populates them;
+  `chimera/.run/` (datadirs, pidfiles, logs) is gitignored.
 - [x] **M0.2** ✅ `/mariadb-10.11/` added to [.gitignore](.gitignore) alongside the other clones.
 - [x] **M0.3** ✅ 10.11 lives in its own **shallow clone** `mariadb-10.11/` at tag
   `mariadb-10.11.18` (a `git worktree` off `mariadb-server/` isn't possible — that clone is
