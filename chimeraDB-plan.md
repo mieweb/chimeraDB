@@ -476,6 +476,13 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 - [x] `demo-oplog.sh` shows wire-writes *and* raw-SQL writes streaming to a tailing cursor, on both versions.
 - [x] A bidirectional-column `UPDATE` (M5.8) produces exactly one oplog `'u'` entry containing the merged document.
 
+> **Sequel (2026-08-10):** Meteor 3.5 flipped its default reactivity driver from oplog
+> tailing to MongoDB **change streams** (`changeStreams → oplog → polling`), and chimera's
+> `hello` advertises exactly the signals (`setName`, wire version 17) that make a 3.5
+> driver select change streams — then fail at `watch()`. Serving `$changeStream` from
+> this same oplog, plus the stopgap for stock Meteor 3.5 until it lands, is specced with
+> checkboxes in **[changestream-plan.md](changestream-plan.md)**.
+
 ---
 
 ## Milestone 6 — Meteor end-to-end (acceptance test)
