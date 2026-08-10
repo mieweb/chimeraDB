@@ -17,6 +17,13 @@ std::string conjoin(const std::vector<std::string>& parts, const char* joiner) {
   return "(" + sql + ")";
 }
 
+// A Timestamp is an ordered pair packed into one 64-bit value, exactly as the
+// wire format stores it, so `$gt` on an oplog cursor is a single comparison.
+int64_t timestamp_ordinal(const bson_value_t& v) {
+  return (static_cast<int64_t>(v.value.v_timestamp.timestamp) << 32) |
+         static_cast<int64_t>(v.value.v_timestamp.increment);
+}
+
 class Compiler {
 public:
   explicit Compiler(std::string doc_column) : doc_(std::move(doc_column)) {}
@@ -49,6 +56,9 @@ private:
       case BSON_TYPE_INT64: params_.push_back({v.value.v_int64}); break;
       case BSON_TYPE_DOUBLE: params_.push_back({v.value.v_double}); break;
       case BSON_TYPE_DATE_TIME: params_.push_back({v.value.v_datetime}); break;
+      case BSON_TYPE_TIMESTAMP:
+        params_.push_back({timestamp_ordinal(v)});
+        break;
       case BSON_TYPE_OID: {
         char oid[25];
         bson_oid_to_string(&v.value.v_oid, oid);
@@ -71,6 +81,17 @@ private:
 
   // JSON_VALUE returns text; numeric comparisons must compare as numbers.
   std::string comparable(const Path& path, const bson_value_t& against) {
+    if (against.value_type == BSON_TYPE_TIMESTAMP) {
+      // A Timestamp orders by (t, i) as one 64-bit ordinal, which a DOUBLE
+      // cannot hold exactly — hence integer arithmetic rather than a CAST of
+      // the COALESCE that scalar_expr builds.
+      const std::string base = to_json_path(path);
+      const auto part = [&](const char* name) {
+        return "CAST(JSON_VALUE(" + doc_ + ",'" + base + R"(."$timestamp".)" + name +
+               "') AS UNSIGNED)";
+      };
+      return "(" + part("t") + " * 4294967296 + " + part("i") + ")";
+    }
     if (value_is_numeric(against) || against.value_type == BSON_TYPE_DATE_TIME) {
       return "CAST(" + value_expr(path) + " AS DOUBLE)";
     }

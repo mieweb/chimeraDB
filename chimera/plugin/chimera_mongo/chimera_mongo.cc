@@ -11,9 +11,13 @@
 #include <string>
 
 #include "listener.h"
+#include "oplog.h"
 
 static char *chimera_mongo_bind_value = nullptr;
 static unsigned int chimera_mongo_port_value = 0;
+static unsigned long long chimera_mongo_oplog_max_rows_value = 0;
+static unsigned long long chimera_mongo_oplog_max_age_value = 0;
+static std::unique_ptr<chimera::OplogPruner> chimera_mongo_pruner;
 
 // Loopback by default and deliberately: there is no authentication yet, so a
 // wide bind would expose every document to the network (M3.4).
@@ -28,9 +32,23 @@ static MYSQL_SYSVAR_UINT(port, chimera_mongo_port_value, PLUGIN_VAR_READONLY,
                          "TCP port the MongoDB wire listener accepts on",
                          nullptr, nullptr, 27018, 1, 65535, 0);
 
+// The oplog is a capped collection in behaviour, not in storage, so the cap is
+// two settable limits. 100k entries is roughly a day of a small application's
+// writes; the age limit is what actually bounds recovery for an idle system.
+// Zero switches either half off.
+static MYSQL_SYSVAR_ULONGLONG(oplog_max_rows, chimera_mongo_oplog_max_rows_value, 0,
+                              "Maximum oplog entries retained (0 disables the limit)",
+                              nullptr, nullptr, 100000, 0, ~0ULL, 1);
+
+static MYSQL_SYSVAR_ULONGLONG(oplog_max_age_seconds, chimera_mongo_oplog_max_age_value, 0,
+                              "Maximum oplog entry age in seconds (0 disables the limit)",
+                              nullptr, nullptr, 86400, 0, ~0ULL, 1);
+
 static struct st_mysql_sys_var *chimera_mongo_system_variables[] = {
   MYSQL_SYSVAR(bind),
   MYSQL_SYSVAR(port),
+  MYSQL_SYSVAR(oplog_max_rows),
+  MYSQL_SYSVAR(oplog_max_age_seconds),
   nullptr
 };
 
@@ -50,6 +68,9 @@ static int chimera_mongo_init(void *p)
   fprintf(stderr, "chimera_mongo: listening on %s:%u\n",
           chimera_mongo_bind_value, chimera_mongo_port_value);
 
+  chimera_mongo_pruner= std::make_unique<chimera::OplogPruner>(
+      &chimera_mongo_oplog_max_rows_value, &chimera_mongo_oplog_max_age_value);
+
   static_cast<struct st_plugin_int *>(p)->data= listener.release();
   return 0;
 }
@@ -57,6 +78,9 @@ static int chimera_mongo_init(void *p)
 static int chimera_mongo_deinit(void *p)
 {
   auto *plugin= static_cast<struct st_plugin_int *>(p);
+  // Stop the pruner before the listener: it holds a session of its own, and
+  // joining it first means no thread outlives the plugin's SQL access.
+  chimera_mongo_pruner.reset();
   // The destructor stops accepting, unblocks every connection thread and joins
   // them, so the server shuts down with no threads left behind.
   delete static_cast<chimera::Listener *>(plugin->data);

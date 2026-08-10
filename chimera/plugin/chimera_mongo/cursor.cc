@@ -40,6 +40,36 @@ int64_t CursorRegistry::open(std::string ns, std::vector<Bson> remaining) {
   return id;
 }
 
+int64_t CursorRegistry::open_tail(std::string ns, TailState state) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  expire_idle();
+  const int64_t id = next_id_++;
+  Entry entry;
+  entry.ns = std::move(ns);
+  entry.last_used_seconds = now_seconds();
+  entry.tailing = true;
+  entry.tail = std::move(state);
+  cursors_.emplace(id, std::move(entry));
+  return id;
+}
+
+bool CursorRegistry::tail_state(int64_t id, const std::string& ns, TailState* state) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto it = cursors_.find(id);
+  if (it == cursors_.end() || it->second.ns != ns || !it->second.tailing) return false;
+  it->second.last_used_seconds = now_seconds();
+  state->filter = Bson::copy_of(it->second.tail.filter.get());
+  state->after_seq = it->second.tail.after_seq;
+  state->await_data = it->second.tail.await_data;
+  return true;
+}
+
+void CursorRegistry::advance_tail(int64_t id, uint64_t after_seq) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto it = cursors_.find(id);
+  if (it != cursors_.end()) it->second.tail.after_seq = after_seq;
+}
+
 std::vector<Bson> CursorRegistry::next_batch(int64_t id, const std::string& ns,
                                              int32_t batch_size, bool* exhausted) {
   std::lock_guard<std::mutex> guard(mutex_);

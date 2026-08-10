@@ -39,6 +39,8 @@ MYSQL_ADD_PLUGIN(chimera_mongo
   sql.cc
   collection.cc
   cursor.cc
+  oplog.cc
+  projection.cc
   MODULE_ONLY
   COMPONENT Server
   LINK_LIBRARIES ${CHIMERA_TRANSLATOR_LIB} ${CHIMERA_BSON_LIBRARIES}

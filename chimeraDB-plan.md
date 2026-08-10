@@ -396,34 +396,74 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 
 **Goal:** `local.oplog.rs` emulation with transactional guarantees (D7).
 
-- [ ] **M5.1** Schema in `chimera/sql/oplog.sql`: `chimera_meta.oplog(seq BIGINT AUTO_INCREMENT PK, ts_t INT UNSIGNED, ts_i INT UNSIGNED, op ENUM('i','u','d'), ns VARCHAR(512), o JSON, o2 JSON NULL)`;
+- [x] **M5.1** Schema in `chimera/sql/oplog.sql`: `chimera_meta.oplog(seq BIGINT AUTO_INCREMENT PK, ts_t INT UNSIGNED, ts_i INT UNSIGNED, op ENUM('i','u','d'), ns VARCHAR(512), o JSON, o2 JSON NULL)`;
   Timestamp rule: `ts_t` = unix seconds, `ts_i` = per-second counter derived under the same lock as `seq`.
-- [ ] **M5.2** Translator/plugin write path: every insert/update/delete appends its oplog row
+- [x] **M5.2** Translator/plugin write path: every insert/update/delete appends its oplog row
   **in the same transaction** ('u' entries use full-document replacement style in `o`,
   `{_id}` in `o2` — simplest form Meteor accepts).
-- [ ] **M5.3** SQL-side capture: `chimera/sql/triggers.tpl.sql` — AFTER INSERT/UPDATE/DELETE
+- [x] **M5.3** SQL-side capture: `chimera/sql/triggers.tpl.sql` — AFTER INSERT/UPDATE/DELETE
   triggers per collection table appending equivalent oplog rows; installed by `create`
   (M4.2) and by a `chimera_adopt_table` procedure for pre-existing tables. Guard against
   double-write when the mutation came through the plugin (session variable flag).
-- [ ] **M5.4** Capped-collection emulation: background pruning of `chimera_meta.oplog`
+- [x] **M5.4** Capped-collection emulation: background pruning of `chimera_meta.oplog`
   by age/row-count (plugin timer thread; both knobs are system variables).
-- [ ] **M5.5** Tailable + `awaitData` cursors on `local.oplog.rs`: map the namespace to the
+- [x] **M5.5** Tailable + `awaitData` cursors on `local.oplog.rs`: map the namespace to the
   oplog table; support Meteor's exact query shapes (`ts: {$gt: <Timestamp>}`, ns filtering,
   initial "latest entry" fetch); `getMore` parks on an in-process condition variable
   signaled at commit (no polling), honoring `maxTimeMS`.
-- [ ] **M5.6** Demo script `chimera/scripts/demo-oplog.sh --server <v>`: shell A tails the
+- [x] **M5.6** Demo script `chimera/scripts/demo-oplog.sh --server <v>`: shell A tails the
   oplog; shell B inserts via the wire; a third write goes through the **`mariadb` SQL
   client** — all three appear on the tail, in commit order.
-- [ ] **M5.7** Unit-test Meteor's oplog query shapes and Timestamp round-tripping.
-- [ ] **M5.8** Productize bidirectional projections (D10): `chimera_add_projection('<db>.<coll>',
+- [x] **M5.7** Unit-test Meteor's oplog query shapes and Timestamp round-tripping.
+- [x] **M5.8** Productize bidirectional projections (D10): `chimera_add_projection('<db>.<coll>',
   '<json-path>', '<column>', '<type>', 'forward'|'bidirectional')` procedure — forward
   emits the `GENERATED ALWAYS` ALTER; bidirectional emits a real column + backfill
   `UPDATE` + regenerated `BEFORE` write-through trigger, ordered so the AFTER oplog
   trigger (M5.3) captures the post-write-through doc.
 
+> **Correction (2026-02-14, M5):** the triggers of M5.3 turned out to be the *only*
+> oplog writer. A plugin-side append (M5.2) would have to be suppressed whenever a
+> trigger also fired, and the two paths would drift; making the trigger authoritative
+> deletes both the second code path and the double-write guard variable. M5.2 is
+> therefore satisfied *by* M5.3 rather than alongside it — the plugin's writes are
+> ordinary SQL, so their oplog rows land in the same transaction for free.
+
+> **Correction (2026-02-14, M5.1):** oplog entry documents are assembled with `CONCAT`,
+> not `JSON_OBJECT`. MariaDB's JSON type is LONGTEXT, so `JSON_OBJECT('o', o)` embeds
+> the stored document as a *string*. Total ordering of `(ts_t, ts_i)` comes from an X
+> lock on a single `chimera_meta.oplog_clock` row, which serializes writers — the price
+> of a monotonic timestamp without a replica set's oplog allocator.
+
+> **Correction (2026-02-14, M5.3):** all of this runs as a dedicated locked account,
+> `'chimera'@'localhost'`. The plugin's local connection is the server's anonymous
+> internal user, so anything it creates gets definer `''@''` — and a trigger whose
+> definer does not exist *refuses to fire* (`ERROR 1449`), which silently breaks the
+> raw-SQL write path that is the whole point of trigger-based capture. The account is
+> created with `ACCOUNT LOCK` and granted only `SELECT, TRIGGER` globally (a trigger
+> body reading `NEW.doc` is privilege-checked against its definer, and collection
+> tables appear in any database on demand) plus DML on `chimera_meta`.
+
+> **Correction (2026-02-14, M5.5):** `awaitData` parks on the condition variable as
+> planned, but caps each wait at ~50 ms and re-queries. A write made by an ordinary
+> SQL client happens outside the plugin's process and cannot signal its condvar, so a
+> pure condition-variable wait would miss exactly the writes M5.6 exists to prove. The
+> polling interval is the latency floor for SQL-side writes only; wire writes are still
+> signaled immediately at commit. A trigger-invoked notify UDF would remove the poll.
+
+> **Correction (2026-02-14, M5.8):** `chimera_add_projection` accepts only a single
+> top-level field, not a JSON path — a nested path needs a merge patch the procedure
+> does not build, and projecting the wrong subtree silently is worse than refusing. Two
+> MariaDB constraints shaped the implementation: stored functions are forbidden inside
+> generated-column expressions, so the extJSON type-wrapper `COALESCE` is spelled out
+> at each use site rather than factored out; and `JSON_MERGE_PATCH` descends into
+> objects, so the field's old type wrapper must be `JSON_REMOVE`d before the new one is
+> merged, or the document ends up carrying both. Bidirectional mode also issues a
+> column-scoped `GRANT UPDATE (doc, <column>)` on that one table, because a BEFORE
+> trigger assigning `NEW.doc` is checked against its definer.
+
 **Exit criteria:**
-- [ ] `demo-oplog.sh` shows wire-writes *and* raw-SQL writes streaming to a tailing cursor, on both versions.
-- [ ] A bidirectional-column `UPDATE` (M5.8) produces exactly one oplog `'u'` entry containing the merged document.
+- [x] `demo-oplog.sh` shows wire-writes *and* raw-SQL writes streaming to a tailing cursor, on both versions.
+- [x] A bidirectional-column `UPDATE` (M5.8) produces exactly one oplog `'u'` entry containing the merged document.
 
 ---
 
@@ -486,6 +526,19 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 - [ ] SCRAM-SHA-256 auth on the mongo listener (until then: localhost bind only)
 - [ ] Positional `$` update operator; `$elemMatch` completeness
 - [ ] Filter compile-to-SQL fast path (replace RMW scans; push predicates to generated-column indexes)
+- [ ] Vector search — **plugin-side MHNSW**, identical on both LTS versions (keeps rule 4):
+  per-index sibling InnoDB graph table (`layer, tref, vec, neighbors` — the same shape as
+  11.8's hidden `#i#01` hlindex) created and maintained by the translator through the
+  SQL-service choke point, in the **same transaction** as wire writes; raw-SQL writes
+  reconciled asynchronously by tailing the M5 oplog (= Atlas's consistency model).
+  Exposed as a `$vectorSearch`-shaped stage + `createIndexes {type:"vectorSearch"}`;
+  needs **no** server `VECTOR` type, parser, or optimizer support, so 10.11 works too.
+  Porting the GPLv2 algorithm from
+  [sql/vector_mhnsw.cc](mariadb-server/sql/vector_mhnsw.cc) is license-compatible
+  (rule 1 quarantines only `mongodb/`) — port the neighbor-selection heuristic for recall
+  parity. No differential oracle (community mongod lacks `$vectorSearch`) — golden-file
+  specs instead. Costs to size: SQL round-trips on cold search (plugin-side graph cache
+  mitigates), serialized inserts at the entry-point row.
 - [ ] `eager` projection mode automation (sampling + auto-ALTER policy)
 - [ ] mongodump/mongorestore compatibility pass
 - [ ] Strict type-mismatch mode (D8)

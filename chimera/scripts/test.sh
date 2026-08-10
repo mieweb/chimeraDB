@@ -33,6 +33,12 @@ chimera_require_running
 note "=== Mongo wire protocol on $SERVER_VERSION ==="
 "$CHIMERA_DIR/scripts/demo-m3.sh" --server "$SERVER_VERSION"
 
+# The two halves of the change-stream story: writes from either door land in the
+# oplog, and a projected column stays in step with the document.
+note "=== oplog and projections on $SERVER_VERSION ==="
+"$CHIMERA_DIR/scripts/demo-oplog.sh" --server "$SERVER_VERSION"
+"$CHIMERA_DIR/scripts/demo-projection.sh" --server "$SERVER_VERSION"
+
 # The referee: every command surface is replayed against a real mongod and the
 # two transcripts must be identical.
 note "=== differential vs MongoDB on $SERVER_VERSION ==="

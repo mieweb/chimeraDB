@@ -3,6 +3,7 @@
 #include <sys/time.h>
 
 #include <algorithm>
+#include <chrono>
 
 #include "chimera/codec.h"
 #include "chimera/error.h"
@@ -10,6 +11,7 @@
 #include "chimera/sort.h"
 #include "collection.h"
 #include "cursor.h"
+#include "oplog.h"
 
 namespace chimera {
 namespace {
@@ -24,6 +26,12 @@ constexpr int32_t kMinWireVersion = 0;
 
 // MongoDB's default first batch. Drivers override it; the shell does not.
 constexpr int32_t kDefaultBatchSize = 101;
+
+// How long an `awaitData` getMore parks before returning empty, and how often it
+// re-checks while parked. The poll exists only because writes from an ordinary
+// SQL client happen outside this process and cannot signal it directly.
+constexpr int64_t kDefaultAwaitMs = 1000;
+constexpr int64_t kOplogPollMs = 50;
 
 int64_t now_millis() {
   struct timeval tv;
@@ -242,8 +250,73 @@ Bson cursor_reply(int64_t cursor_id, const std::string& ns, const char* batch_na
   return reply;
 }
 
+// `local.oplog.rs` is not a table but a view over chimera_meta.oplog. Meteor
+// reads it twice: once with `{$natural: -1}` and limit 1 to learn the current
+// head, then tailing from there.
+Bson find_oplog(Ctx& ctx, const Namespace& ns) {
+  install_oplog_schema(ctx.sql());
+
+  bson_t filter;
+  bson_t sort;
+  sub_document(ctx, "filter", &filter);
+  sub_document(ctx, "sort", &sort);
+
+  const bool newest_first = number(&sort, "$natural", 1) < 0;
+  const int64_t limit = number(ctx.body, "limit", 0);
+  const int64_t batch_size = number(ctx.body, "batchSize", kDefaultBatchSize);
+  const uint64_t wanted = limit > 0 ? static_cast<uint64_t>(limit)
+                                    : static_cast<uint64_t>(std::max<int64_t>(batch_size, 1));
+
+  // Captured before the read: every row up to here has now been considered,
+  // including the ones the filter rejected, so a tail need never revisit them.
+  const uint64_t head = oplog_head(ctx.sql());
+  OplogBatch batch = read_oplog(ctx.sql(), &filter, 0, wanted, newest_first);
+
+  if (!flag(ctx.body, "tailable")) {
+    return cursor_reply(0, ns.text(), "firstBatch", batch.documents);
+  }
+
+  TailState tail;
+  tail.filter = Bson::copy_of(&filter);
+  tail.after_seq =
+      (!newest_first && batch.documents.size() >= wanted) ? batch.last_seq : head;
+  tail.await_data = flag(ctx.body, "awaitData");
+  const int64_t cursor_id = CursorRegistry::instance().open_tail(ns.text(), std::move(tail));
+  return cursor_reply(cursor_id, ns.text(), "firstBatch", batch.documents);
+}
+
+// A tailing getMore re-reads rather than draining a buffer, and parks when it
+// catches up so the client is not left polling.
+Bson tail_batch(Ctx& ctx, int64_t cursor_id, const Namespace& ns, const TailState& tail,
+                int32_t batch_size, int64_t max_time_ms) {
+  const uint64_t wanted = static_cast<uint64_t>(std::max(batch_size, 1));
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(std::max<int64_t>(max_time_ms, 0));
+
+  OplogBatch batch;
+  uint64_t next_after = tail.after_seq;
+  for (;;) {
+    const uint64_t head = oplog_head(ctx.sql());
+    batch = read_oplog(ctx.sql(), tail.filter.get(), tail.after_seq, wanted, false);
+    next_after = batch.documents.size() >= wanted ? batch.last_seq : head;
+    if (!batch.documents.empty() || !tail.await_data) break;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) break;
+    const int64_t left =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+    // A write from a plain SQL client never reaches this process, so the wait is
+    // capped: writes over the wire wake it at once, external ones within a poll.
+    wait_for_oplog_write(static_cast<uint64_t>(std::min<int64_t>(left, kOplogPollMs)));
+  }
+
+  CursorRegistry::instance().advance_tail(cursor_id, next_after);
+  return cursor_reply(cursor_id, ns.text(), "nextBatch", batch.documents);
+}
+
 Bson cmd_find(Ctx& ctx) {
   const Namespace ns = ctx.ns();
+  if (is_oplog_namespace(ns)) return find_oplog(ctx, ns);
   Collection collection(ctx.sql(), ns);
 
   std::vector<Bson> documents;
@@ -282,10 +355,18 @@ Bson cmd_get_more(Ctx& ctx) {
   }
   const int64_t cursor_id = static_cast<int64_t>(value_as_double(id->get()));
   const Namespace ns = parse_namespace(ctx.db, text_field(ctx.body, "collection"));
+  const int32_t batch_size =
+      static_cast<int32_t>(number(ctx.body, "batchSize", kDefaultBatchSize));
+
+  TailState tail;
+  if (CursorRegistry::instance().tail_state(cursor_id, ns.text(), &tail)) {
+    return tail_batch(ctx, cursor_id, ns, tail, batch_size,
+                      number(ctx.body, "maxTimeMS", kDefaultAwaitMs));
+  }
+
   bool exhausted = false;
   std::vector<Bson> batch = CursorRegistry::instance().next_batch(
-      cursor_id, ns.text(),
-      static_cast<int32_t>(number(ctx.body, "batchSize", kDefaultBatchSize)), &exhausted);
+      cursor_id, ns.text(), batch_size, &exhausted);
   return cursor_reply(exhausted ? 0 : cursor_id, ns.text(), "nextBatch", batch);
 }
 
@@ -403,6 +484,9 @@ void run_atomically(SqlSession& sql, Fn&& body) {
     throw;
   }
   sql.commit();
+  // The triggers appended oplog rows inside that transaction; now that it is
+  // durable, any cursor parked on `awaitData` can be woken.
+  signal_oplog_write();
 }
 
 Bson cmd_insert(Ctx& ctx) {

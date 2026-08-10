@@ -7,6 +7,8 @@
 #include "chimera/filter.h"
 #include "chimera/id.h"
 #include "chimera/update.h"
+#include "oplog.h"
+#include "projection.h"
 
 namespace chimera {
 namespace {
@@ -61,6 +63,8 @@ void Collection::bootstrap(SqlSession& sql) {
       " key_spec JSON NOT NULL,"
       " is_unique TINYINT(1) NOT NULL DEFAULT 0,"
       " PRIMARY KEY (db_name, coll_name, index_name)) ENGINE=InnoDB");
+  // A DBA who has found chimera_meta has found the projection procedure too.
+  install_projection_support(sql);
 }
 
 bool Collection::exists() const {
@@ -85,8 +89,9 @@ void Collection::create(bool error_if_exists) {
   // raw and a collation must never fold two distinct ids together.
   sql_.exec("CREATE TABLE IF NOT EXISTS " + ns_.table() +
             " (_id VARBINARY(255) NOT NULL PRIMARY KEY, doc JSON NOT NULL) ENGINE=InnoDB");
-  sql_.exec("REPLACE INTO chimera_meta.collections (db_name, coll_name) VALUES (" +
-            sql_.quote(ns_.db) + ", " + sql_.quote(ns_.collection) + ")");
+  // Registering the collection and installing its oplog triggers are the same
+  // step, so a table can never exist without the mirror that watches it (D7).
+  install_oplog_triggers(sql_, ns_);
 }
 
 void Collection::drop() {
