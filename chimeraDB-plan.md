@@ -606,20 +606,53 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 
 ---
 
-## Milestone 8 — Hardening backlog *(explicitly out of scope for v1 — do not start without discussion)*
+## Milestone 8 — Post-v1 roadmap *(ordered 2026-08-10; v1 ships without any of it)*
 
-- [ ] Wire-level transactions (`startTransaction`/`commitTransaction` → InnoDB txns — natural fit)
-- [ ] SCRAM-SHA-256 auth on the mongo listener — tracked as [#5](https://github.com/mieweb/chimeraDB/issues/5) (until then: localhost bind only, and M9 must enforce it)
-- [ ] Positional `$` update operator; `$elemMatch` completeness
-- [ ] Filter compile-to-SQL fast path (replace RMW scans; push predicates to generated-column indexes)
-- [ ] mongodump/mongorestore compatibility pass
-- [ ] Strict type-mismatch mode (D8)
-- [ ] Performance baseline + regression suite
+The backlog was discussed and ordered rather than merely kept. Decisions recorded:
 
-**Spun out** — three of these were projects, not backlog lines. They are ticket T1, T2 and T3
-in [release-plan.md](release-plan.md#tickets--three-m8-items-that-are-their-own-projects):
-vector search (plugin-side MHNSW), `chimerash` (the dual-language REPL), and `eager`
-projection automation. Each carries the decision it is blocked on rather than a scope.
+- **v1 = M7 + packaging** ([release-plan.md](release-plan.md) M9). The compatibility bar
+  stays Meteor (D2), which never opens a transaction — so v1 ships without them, and
+  neither `hello` nor the README pretends otherwise.
+- **The v1 performance claim is "does not regress," not "competes with mongod."** That is
+  what a baseline + regression suite can prove. A competition claim would need a benchmark
+  nobody has designed and a reason to win it nobody has articulated.
+- **D6's arc finishes with data.** Read-modify-write was a deliberate KISS bet; the fast
+  path gets built only if the baseline shows the bet went bad where it matters.
+
+In order:
+
+1. [ ] **Performance baseline + regression suite** — the next engineering milestone after
+   M9 (becomes M10 when specced). Insert / update-by-`_id` / update-by-secondary-key
+   throughput, find on projected vs unprojected paths, oplog tail latency under write
+   load, and the Meteor todos workload — CI-runnable and diffable, not a one-off
+   benchmark. Gates item 3.
+2. [ ] **Wire-level transactions — [#6](https://github.com/mieweb/chimeraDB/issues/6)**,
+   scheduled *soon after v1*: the first driver-facing feature, for
+   `session.withTransaction()` users. The structural half already exists (one `SqlSession`
+   per connection, held for its lifetime); the work is the txn-aware write path and,
+   above all, the driver retry labels (`TransientTransactionError`,
+   `UnknownTransactionCommitResult`) that `withTransaction` loops turn on.
+   Connection-pinned first cut, divergence documented.
+3. [ ] **Filter compile-to-SQL fast path** (replace RMW scans; push predicates to
+   generated-column indexes) — only if item 1's numbers demand it. Starting this without
+   the baseline is optimizing a rumor.
+4. [ ] **Checkbox-sized, no ordering constraints** — each already fails loudly at a fenced
+   `not_implemented` and is differentially testable against the oracle:
+   - Strict type-mismatch mode (D8) — global sysvar first, per-collection only if asked for
+   - Positional `$` update operator ([update.cpp](chimera/translator/src/update.cpp))
+   - `$elemMatch` with operators ([filter.cpp](chimera/translator/src/filter.cpp))
+   - mongodump/mongorestore compatibility pass
+
+Tracked independently of this order:
+
+- **SCRAM-SHA-256 auth — [#5](https://github.com/mieweb/chimeraDB/issues/5)**:
+  release-gating for any non-loopback deployment; until it lands, M9 enforces the
+  loopback bind rather than merely defaulting to it.
+- **Spun out as projects**, each blocked on its own decision rather than on engineering:
+  vector search [#2](https://github.com/mieweb/chimeraDB/issues/2), `chimerash`
+  [#3](https://github.com/mieweb/chimeraDB/issues/3), `eager` projection automation
+  [#4](https://github.com/mieweb/chimeraDB/issues/4). Ticket texts:
+  [release-plan.md](release-plan.md#tickets--three-m8-items-that-are-their-own-projects).
 
 ---
 
