@@ -8,7 +8,18 @@ set -euo pipefail
 
 CHIMERA_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REPO_ROOT=$(cd "$CHIMERA_DIR/.." && pwd)
-RUN_DIR="$CHIMERA_DIR/.run"
+
+# CHIMERA_OUT moves every build product out of the checkout. Unset — the normal
+# case — nothing moves. Set, a Linux container can build the same bind-mounted
+# checkout the macOS host is already building without the two fighting over one
+# cmake cache. The plugin's CMakeLists reads the same variable.
+if [[ -n ${CHIMERA_OUT:-} ]]; then
+  RUN_DIR="$CHIMERA_OUT/run"
+  TRANSLATOR_BUILD="$CHIMERA_OUT/translator"
+else
+  RUN_DIR="$CHIMERA_DIR/.run"
+  TRANSLATOR_BUILD="$CHIMERA_DIR/translator/build"
+fi
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 note() { printf '==> %s\n' "$*"; }
@@ -44,8 +55,13 @@ chimera_select_server() {
     11.8)  SERVER_VERSION=11.8;  SERVER_TREE="$REPO_ROOT/mariadb-server"; SQL_PORT=3307; MONGO_PORT=27018 ;;
     *) die "unknown --server '$1' (expected 10.11 or 11.8)" ;;
   esac
-  SERVER_BUILD="$SERVER_TREE/build"
-  SERVER_DIST="$SERVER_TREE/dist"
+  if [[ -n ${CHIMERA_OUT:-} ]]; then
+    SERVER_BUILD="$CHIMERA_OUT/$SERVER_VERSION/build"
+    SERVER_DIST="$CHIMERA_OUT/$SERVER_VERSION/dist"
+  else
+    SERVER_BUILD="$SERVER_TREE/build"
+    SERVER_DIST="$SERVER_TREE/dist"
+  fi
   INSTANCE_DIR="$RUN_DIR/$SERVER_VERSION"
   DATADIR="$INSTANCE_DIR/data"
   SOCKET="$INSTANCE_DIR/mysql.sock"

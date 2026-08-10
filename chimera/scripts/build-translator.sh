@@ -15,7 +15,7 @@ while (($#)); do
   esac
 done
 
-BUILD_DIR="$CHIMERA_DIR/translator/build"
+BUILD_DIR="$TRANSLATOR_BUILD"
 $clean && rm -rf "$BUILD_DIR"
 
 chimera_export_pkg_config_path

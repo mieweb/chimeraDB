@@ -14,6 +14,16 @@ using namespace chimera;
 
 namespace {
 
+// libbson renders an empty document as "{  }" in 1.x and "{ }" in 2.x, so an
+// expectation written against either spelling fails on the other platform.
+// These tests are about which command a verb becomes, not about the driver's
+// spacing.
+std::string canonical_spacing(std::string text) {
+  size_t at;
+  while ((at = text.find("  ")) != std::string::npos) text.erase(at, 1);
+  return text;
+}
+
 // Arguments are compared as extended JSON, which is also how they will be
 // spelled when the gateway hands them to a command handler.
 std::string arg_text(const ShellCall& call, size_t index) {
@@ -21,11 +31,12 @@ std::string arg_text(const ShellCall& call, size_t index) {
   const bson_value_t& value = call.args[index].get();
   bson_t view;
   REQUIRE(bson_init_static(&view, value.value.v_doc.data, value.value.v_doc.data_len));
-  return to_extjson(&view);
+  return canonical_spacing(to_extjson(&view));
 }
 
 std::string command_text(const std::string& statement) {
-  return to_extjson(build_shell_command(parse_shell_call(statement)).command.get());
+  return canonical_spacing(
+      to_extjson(build_shell_command(parse_shell_call(statement)).command.get()));
 }
 
 }  // namespace

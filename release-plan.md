@@ -52,12 +52,31 @@ Not a formality. Three concrete things are macOS-only today:
 - [x] **M9.0.1** Make the pkg-config path discovery portable: use `pkg-config` as found, and
   only prepend a Homebrew prefix when `brew` exists. One change, both scripts, no new
   abstraction.
-- [ ] **M9.0.2** `chimera/packaging/docker/dev-debian.Dockerfile` — a Debian image with
+- [x] **M9.0.2** `chimera/packaging/docker/dev-debian.Dockerfile` — a Debian image with
   toolchain, `libbson-dev`, and a MariaDB source tree, that runs
   `chimera/scripts/test.sh --server <v>` unmodified. This proves the *existing* dev path on
   Linux before anything is repackaged.
+  Built by [dev.sh](chimera/packaging/docker/dev.sh), which bind-mounts the checkout so the
+  scripts under test are the working tree's. Two supporting decisions:
+  `CHIMERA_OUT` relocates every build product to a container volume — one checkout cannot
+  hold two platforms' cmake caches — and
+  [build-server.sh](chimera/packaging/docker/build-server.sh) scripts the MariaDB build that
+  [build-plan.md](build-plan.md) did by hand on macOS, with the storage engines ChimeraDB
+  never loads switched off (1208 targets instead of ~4000).
 - [ ] **M9.0.3** Fix whatever M9.0.2 finds. Record each fix here as a correction note —
   divergences between the two platforms are the interesting output of this milestone.
+
+  > **Correction 1 — `doctest` was an undeclared build dependency.** It reached the macOS
+  > build through Homebrew and nothing said so. Debian's `doctest-dev` is now installed by
+  > the image; on macOS nothing changes.
+  >
+  > **Correction 2 — libbson spells an empty document differently across major versions.**
+  > 1.x (bookworm) emits `{  }`, 2.x (Homebrew) emits `{ }`, so three assertions in
+  > [test_gateway.cpp](chimera/tests/unit/test_gateway.cpp) passed on one platform and failed
+  > on the other. Normalized in the test, not in `to_extjson`: the spacing is libbson's to
+  > choose, JSON whitespace is insignificant, and a structure-blind collapse applied to real
+  > documents would corrupt string values that contain two spaces.
+
 - [ ] **M9.0.4** Same on arm64 **and** amd64 (see M9.1 on why the arch matters this early).
 
 **Exit criteria:** `test.sh` green for 10.11 and 11.8 inside a Debian container, on both
