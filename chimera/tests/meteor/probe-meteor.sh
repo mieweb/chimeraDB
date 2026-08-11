@@ -51,7 +51,7 @@ for probe in "${probes[@]}"; do
   dbname=${rest%%|*}
   cmd=${rest#*|}
 
-  result=$("$ORACLE_MONGO" --quiet --port "$MONGO_PORT" --eval "
+  result=$("$REFERENCE_MONGO" --quiet --port "$MONGO_PORT" --eval "
     var r = db.getSiblingDB('$dbname').runCommand($cmd);
     print(r.ok == 1 ? 'ok' : (r.codeName || r.code || 'failed') + ': ' + (r.errmsg || ''));
   " 2>&1 | tr -d '\n')

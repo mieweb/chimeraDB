@@ -70,9 +70,9 @@ chimera_select_server() {
   MARIADBD="$SERVER_DIST/bin/mariadbd"
   MARIADB="$SERVER_DIST/bin/mariadb"
   INSTALL_DB="$SERVER_DIST/scripts/mariadb-install-db"
-  ORACLE_MONGO="$REPO_ROOT/mongodb/build/install/bin/mongo"
-  ORACLE_MONGOD="$REPO_ROOT/mongodb/build/install/bin/mongod"
-  ORACLE_MONGO_PORT=27117
+  REFERENCE_MONGO="$REPO_ROOT/mongodb/build/install/bin/mongo"
+  REFERENCE_MONGOD="$REPO_ROOT/mongodb/build/install/bin/mongod"
+  REFERENCE_MONGO_PORT=27117
 }
 
 chimera_require_dist() {

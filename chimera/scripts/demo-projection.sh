@@ -18,7 +18,7 @@ NS="$DB.$COLL"
 note "=== projection demo on $SERVER_VERSION ==="
 
 mongo_eval() {
-  "$ORACLE_MONGO" --quiet --port "$MONGO_PORT" --eval "$1"
+  "$REFERENCE_MONGO" --quiet --port "$MONGO_PORT" --eval "$1"
 }
 
 # Rows are addressed by the document field rather than by the _id column, whose

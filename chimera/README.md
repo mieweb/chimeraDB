@@ -2,7 +2,7 @@
 
 This directory is the whole product. Everything outside it (`mariadb-server/`,
 `mariadb-10.11/`, `mongodb/`) is unmodified third-party source: two host servers we build
-against and one black-box test oracle. **Nothing in those trees is ever edited** — the only
+against and one black-box reference. **Nothing in those trees is ever edited** — the only
 link between them and this directory is a regenerable symlink created by
 [scripts/link-plugin.sh](scripts/link-plugin.sh).
 
@@ -60,9 +60,9 @@ claim must hold on both LTS lines (ground rule 4). Runtime state — datadirs, p
 
 Three levels, deliberately separate. `unit/` tests the translator with no server running.
 `differential/` runs identical operations against ChimeraDB and against the real `mongod`
-oracle and diffs the results — the oracle decides what "MongoDB-compatible" means, so we
-never have to guess. `meteor/` is the acceptance bar: a stock Meteor todos app that must run
-reactively, oplog tailing and all.
+reference and diffs the results — the reference decides what "MongoDB-compatible" means, so
+we never have to guess. `meteor/` is the acceptance bar: a stock Meteor todos app that must
+run reactively, oplog tailing and all.
 
 ---
 

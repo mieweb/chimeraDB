@@ -252,10 +252,10 @@ Scope-check against CS0.4 findings first.
 
 ### Phase 5 — Differential + regression coverage
 
-- [ ] **CS5.1** The oracle mongod (8.0.12) must answer `$changeStream`, which requires a
+- [ ] **CS5.1** The reference mongod (8.0.12) must answer `$changeStream`, which requires a
   replica set: teach the differential harness ([chimera/tests/differential/](chimera/tests/differential/))
-  to start the oracle with `--replSet rs0` + `rs.initiate()` (one-node). Existing specs
-  must stay byte-identical — this flips nothing else about the oracle.
+  to start the reference with `--replSet rs0` + `rs.initiate()` (one-node). Existing specs
+  must stay byte-identical — this flips nothing else about the reference.
 - [ ] **CS5.2** New spec `chimera/tests/differential/specs/changestreams.js` following the
   [cursors.js](chimera/tests/differential/specs/cursors.js) house style, covering at
   minimum: open with empty pipeline → empty `firstBatch` + nonzero id; insert/replace
@@ -263,7 +263,7 @@ Scope-check against CS0.4 findings first.
   **mask** `_id`/tokens, `clusterTime`, and `ns` differences the same way existing
   specs mask volatile fields); resume via `startAfter` picks up exactly-after; getMore
   on a quiet stream returns empty batch with a PBRT; `killCursors`; bogus token → error
-  class; extra stage after `$changeStream` → error on chimera (oracle differs here —
+  class; extra stage after `$changeStream` → error on chimera (reference differs here —
   fence it as a documented divergence, like other `not_implemented` fences).
 - [ ] **CS5.3** Unit + differential + existing suites green on both versions
   (`chimera/scripts/test.sh --server 10.11` and `--server 11.8`), 8/8 + new spec.
@@ -315,7 +315,7 @@ Scope-check against CS0.4 findings first.
 - [ ] A raw-SQL `INSERT` via the `mariadb` client appears live in the browser through a change stream.
 - [ ] Meteor ≤3.4 / forced-oplog behavior unchanged (full existing suite green).
 - [ ] A pruned-away resume token produces `ChangeStreamHistoryLost` (286) and Meteor visibly recovers (log line + UI converges).
-- [ ] Differential spec green against the replica-set oracle; divergences fenced and documented, never silent.
+- [ ] Differential spec green against the replica-set reference; divergences fenced and documented, never silent.
 
 ## 7. Non-goals (documented divergences — say so in the README, fail loudly in code)
 
@@ -330,10 +330,10 @@ Scope-check against CS0.4 findings first.
 
 | Risk | Mitigation |
 |---|---|
-| Node-driver resume assertions we haven't met (PBRT/operationTime edge cases) | CS2.4 mongosh smoke test uses the same driver; CS5.2 diffs against a real replica-set oracle |
+| Node-driver resume assertions we haven't met (PBRT/operationTime edge cases) | CS2.4 mongosh smoke test uses the same driver; CS5.2 diffs against a real replica-set reference |
 | Fence semantics subtly wrong → hung or premature methods | CS0.4 verifies the mechanism from Meteor source before Phase 4 is built; CS4.4/CS6.4 test it end-to-end; Meteor logs the failure mode by name |
 | Pruner races a slow consumer → silent gap | CS3.3 makes the gap an explicit 286; CS3.4 keeps the predicate decidable |
-| Oracle-as-replica-set destabilizes existing differential specs | CS5.1 requires byte-identical existing transcripts before the new spec lands |
+| Reference-as-replica-set destabilizes existing differential specs | CS5.1 requires byte-identical existing transcripts before the new spec lands |
 | Per-collection streams multiply tail cursors | Each is one registry entry + one indexed range scan per batch; the M8 performance baseline (roadmap item 1) will measure tail latency under write load either way |
 
 ## 9. Findings (fill in during Phase 0)

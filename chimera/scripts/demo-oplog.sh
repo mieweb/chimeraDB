@@ -17,7 +17,7 @@ NS="$DB.$COLL"
 note "=== oplog demo on $SERVER_VERSION (mongo port $MONGO_PORT, sql port $SQL_PORT) ==="
 
 mongo_eval() {
-  "$ORACLE_MONGO" --quiet --port "$MONGO_PORT" --eval "$1"
+  "$REFERENCE_MONGO" --quiet --port "$MONGO_PORT" --eval "$1"
 }
 
 # A clean slate, and a collection that exists before the tail starts so the

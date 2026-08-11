@@ -95,7 +95,7 @@ void Collection::create(bool error_if_exists) {
 }
 
 void Collection::drop() {
-  // Dropping something that is not there is a no-op, not an error — the oracle
+  // Dropping something that is not there is a no-op, not an error — the reference
   // behaves that way and clients lean on it for idempotent teardown.
   if (!exists()) return;
   sql_.exec("DROP TABLE " + ns_.table());
@@ -250,7 +250,7 @@ std::vector<IndexSpec> Collection::list_indexes() const {
   require_exists();
   // Every Mongo collection has an _id index; here it is the InnoDB primary key,
   // which is why it never appears in chimera_meta.indexes. It is implicitly
-  // unique and, like the oracle, does not advertise a `unique` field.
+  // unique and, like the reference, does not advertise a `unique` field.
   std::vector<IndexSpec> out;
   out.push_back(IndexSpec{"_id_", {{"_id", 1}}, false});
 

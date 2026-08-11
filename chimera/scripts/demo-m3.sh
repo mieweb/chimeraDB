@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Milestone 3: prove the Mongo head is really speaking the wire protocol, using
-# the real MongoDB shell as the client. The shell is a black-box oracle — if it
+# the real MongoDB shell as the client. The shell is a black-box reference — if it
 # is satisfied, a driver will be too.
 #
 #   demo-m3.sh --server 10.11|11.8
@@ -11,11 +11,11 @@ chimera_parse_server "$@"
 ((${#CHIMERA_ARGS[@]} == 0)) || die "unknown argument '${CHIMERA_ARGS[0]}'"
 chimera_require_running
 
-[[ -x $ORACLE_MONGO ]] || die "no mongo shell at $ORACLE_MONGO"
+[[ -x $REFERENCE_MONGO ]] || die "no mongo shell at $REFERENCE_MONGO"
 
 # Runs one JS expression through the shell and prints the result on one line.
 mongo_eval() {
-  "$ORACLE_MONGO" --port "$MONGO_PORT" --quiet --eval "$1" 2>&1 | tr -d ' \n'
+  "$REFERENCE_MONGO" --port "$MONGO_PORT" --quiet --eval "$1" 2>&1 | tr -d ' \n'
 }
 
 note "1. the shell completes a handshake and answers ping ($SERVER_VERSION, port $MONGO_PORT)"
@@ -53,7 +53,7 @@ check_eq "connection survives an error" \
 note "7. the server shuts down cleanly with a client still connected"
 # A listener thread that cannot be joined would hang shutdown forever, so this
 # is the real test of plugin deinit — not a formality.
-"$ORACLE_MONGO" --port "$MONGO_PORT" --quiet --eval 'sleep(30000)' >/dev/null 2>&1 &
+"$REFERENCE_MONGO" --port "$MONGO_PORT" --quiet --eval 'sleep(30000)' >/dev/null 2>&1 &
 idle_client=$!
 sleep 1
 "$CHIMERA_DIR/scripts/stop-server.sh" --server "$SERVER_VERSION" >/dev/null

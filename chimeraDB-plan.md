@@ -15,7 +15,7 @@ pass on **both**.
 > [release-plan.md](release-plan.md) owns M9 — packaging, distribution, CI — and the tickets
 > for the M8 items that became projects of their own. This file owns the
 > *how & when* — engineering decisions, milestones, exit criteria — and does not restate
-> the others. The `mongodb/` tree (r8.0.12) is used **only** as a test oracle and for
+> the others. The `mongodb/` tree (r8.0.12) is used **only** as a reference and for
 > its `mongo` shell client.
 
 ---
@@ -55,7 +55,8 @@ maps each component in that diagram to where it gets built:
 ### Non-negotiable ground rules
 
 1. **SSPL hygiene:** never copy, port, or paraphrase code from `mongodb/` into `chimera/`.
-   The mongodb tree is a *black-box* test oracle and client binary only. Implement the wire
+   The mongodb tree is a *black-box* reference (the "test oracle", in differential-testing
+   terms) and client binary only. Implement the wire
    protocol from public documentation and observed behavior (FerretDB proved cleanroom
    viability). A CI check greps `chimera/` for `mongodb/src` includes — it must stay empty.
 2. **Zero upstream patches:** nothing inside the `mariadb-server/` (11.8) or `mariadb-10.11/`
@@ -79,7 +80,7 @@ chimeraSQL/
 ├── chimeraDB-plan.md           # this file: how & when
 ├── mariadb-server/             # 11.8.8 tree + build/ (gitignored)
 ├── mariadb-10.11/              # 10.11.18 tree + build/ (gitignored)
-├── mongodb/                    # r8.0.12 — ORACLE + mongo shell ONLY (gitignored)
+├── mongodb/                    # r8.0.12 — REFERENCE + mongo shell ONLY (gitignored)
 └── chimera/
     ├── README.md               # folder anchor: what lives here and why
     ├── plugin/chimera_mongo/   # daemon plugin source (symlinked into each server tree)
@@ -100,7 +101,7 @@ Dev port conventions (so everything can run simultaneously):
 | chimera on 10.11 (MySQL proto) | 3308 |
 | chimera_mongo listener (11.8) | 27018 |
 | chimera_mongo listener (10.11) | 27019 |
-| oracle `mongod` | 27117 |
+| reference `mongod` | 27117 |
 
 ---
 
@@ -116,7 +117,7 @@ Dev port conventions (so everything can run simultaneously):
 > |---|---|---|---|
 > | 11.8 LTS | `mariadb-server/` | `mariadb-server/build/sql/mariadbd` | `11.8.8-MariaDB` (client `15.2`) |
 > | 10.11 LTS | `mariadb-10.11/` | `mariadb-10.11/build/sql/mariadbd` | `10.11.18-MariaDB` (client `15.1`) |
-> | oracle | `mongodb/` | `mongodb/build/install/bin/mongod` + `bin/mongo` | `8.0.12` |
+> | reference | `mongodb/` | `mongodb/build/install/bin/mongod` + `bin/mongo` | `8.0.12` |
 
 - [x] **M0.1** Create the `chimera/` directory skeleton above with a `README.md` explaining
   the folder's organizing principle (one paragraph per subdirectory).
@@ -188,7 +189,7 @@ ergonomics, and a future data-migration bridge. Skippable without affecting late
 > If brew installed driver 2.x in M0.7, either install a 1.x driver alongside or skip this milestone.
 
 - [ ] **M0.5.1** Reconfigure the 11.8 tree so CMake reports `CONNECT_MONGODB: ON`; rebuild the CONNECT plugin only.
-- [ ] **M0.5.2** Start the oracle mongod (port 27117) and seed a few documents via the built `mongo` shell.
+- [ ] **M0.5.2** Start the reference mongod (port 27117) and seed a few documents via the built `mongo` shell.
 - [ ] **M0.5.3** In the 11.8 server: `INSTALL SONAME 'ha_connect';` then
   `CREATE TABLE users ENGINE=CONNECT TABLE_TYPE=MONGO TABNAME='test.users' CONNECTION='mongodb://127.0.0.1:27117';`
   (no column list → exercises **discovery**: CONNECT samples documents and infers columns).
@@ -307,7 +308,7 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
   `isWritablePrimary:true`, `setName:"chimera"`, `me`/`hosts`, `logicalSessionTimeoutMinutes:30`,
   `maxWireVersion:17`, `minWireVersion:0` — document why 17), `ping`, `buildInfo`,
   `endSessions` (accept + no-op), and a proper error envelope (`ok:0, code, codeName, errmsg`).
-- [x] **M3.7** Manual verification with the built oracle shell against **both** servers:
+- [x] **M3.7** Manual verification with the built reference shell against **both** servers:
   ```sh
   mongodb/build/install/bin/mongo --port 27018 --quiet --eval 'db.runCommand({ping:1})'
   mongodb/build/install/bin/mongo --port 27019 --quiet --eval 'db.runCommand({ping:1})'
@@ -356,7 +357,7 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
   - [x] `drop`, `dropDatabase`
   - [x] implicit sessions: accept & ignore `lsid`/`txnNumber` on all of the above
 
-  > **Correction (2026-08-10):** three behaviours the plan assumed differ from the oracle.
+  > **Correction (2026-08-10):** three behaviours the plan assumed differ from the reference.
   > A write batch is one transaction **per element**, not per batch — MongoDB batches are
   > not atomic, and rolling back the batch would discard writes the client was already
   > told succeeded. Sort, skip, limit and projection are applied **in the plugin**, not in
@@ -366,14 +367,14 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
   > now *requires* an explicit `name` — the server no longer derives `sku_1_bin_1`.
 
 - [x] **M4.3** Differential harness `chimera/tests/differential/run.sh --server <v>`:
-  starts oracle mongod (27117) + chimera; runs each `.js` spec through the oracle `mongo`
+  starts reference mongod (27117) + chimera; runs each `.js` spec through the reference `mongo`
   shell against **both** endpoints; normalizes (`$clusterTime`, `operationTime`, cursor ids,
   key order) and diffs. A spec passes only if outputs match.
 - [x] **M4.4** Error-parity specs: unknown collection, bad filter operator, duplicate key —
-  same `code`/`codeName` as the oracle where Meteor depends on them.
+  same `code`/`codeName` as the reference where Meteor depends on them.
 
   > **Correction (2026-08-10):** parity is asserted on `code`/`codeName`, never on message
-  > prose, which is not contractual. Matching the oracle forced three code changes: an
+  > prose, which is not contractual. Matching the reference forced three code changes: an
   > operator we simply do not recognize is `BadValue` (2) rather than `NotImplemented`,
   > which stays for the known-but-deferred cases; an unknown update modifier is
   > `FailedToParse` (9); and a missing required command field is `IDLFailedToParse`
@@ -645,7 +646,7 @@ In order:
    generated-column indexes) — only if item 1's numbers demand it. Starting this without
    the baseline is optimizing a rumor.
 4. [ ] **Checkbox-sized, no ordering constraints** — each already fails loudly at a fenced
-   `not_implemented` and is differentially testable against the oracle:
+   `not_implemented` and is differentially testable against the reference:
    - Strict type-mismatch mode (D8) — global sysvar first, per-collection only if asked for
    - Positional `$` update operator ([update.cpp](chimera/translator/src/update.cpp))
    - `$elemMatch` with operators ([filter.cpp](chimera/translator/src/filter.cpp))
@@ -671,7 +672,7 @@ Tracked independently of this order:
 | Layer | Tool | Runs against |
 |---|---|---|
 | Translator unit tests | ctest (M2) | no server |
-| Differential specs | `tests/differential/run.sh` (M4) | chimera 10.11 + 11.8 vs oracle mongod 8.0.12 |
+| Differential specs | `tests/differential/run.sh` (M4) | chimera 10.11 + 11.8 vs reference mongod 8.0.12 |
 | Oplog demos/units | M5 scripts | both versions |
 | End-to-end | Meteor todos (M6) | both versions |
 | Hygiene | `check-hygiene.sh` (M2.6) | repo |

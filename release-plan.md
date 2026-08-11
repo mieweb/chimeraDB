@@ -87,12 +87,12 @@ Not a formality. Three concrete things are macOS-only today:
   > the other linker, and still with no server tree patched. It links, `mariadbd` loads it,
   > and the Mongo listener comes up on Linux.
   >
-  > **Correction 4 — the test oracle is a macOS binary, and that is what blocks the exit
+  > **Correction 4 — the reference is a macOS binary, and that is what blocks the exit
   > criteria.** Every layer that drives a mongo shell (`demo-m3`, `demo-oplog`,
   > `demo-projection`'s wire half, `demo-gateways`, the differential suite) fails in the
   > container with `Exec format error`. The shell is MongoDB 8.0.12 built from `mongodb/`,
   > and the legacy `mongo` client has not shipped in an official tarball since 5.0, so there
-  > is nothing to download — a Linux oracle means building MongoDB inside the image.
+  > is nothing to download — a Linux reference means building MongoDB inside the image.
   > `mongosh` is not a substitute: the specs call `db.runCommand()` synchronously and mongosh
   > returns promises. **This is the remaining work in M9.0 and a hard prerequisite for
   > M9.6.1.**
@@ -110,7 +110,7 @@ Not a formality. Three concrete things are macOS-only today:
 architectures, with no source changes made outside `chimera/`.
 
 > **Status:** the last clause holds — every fix above landed inside `chimera/`. The rest is
-> gated on a Linux oracle build (Correction 4), after which 11.8 and amd64 are only compute.
+> gated on a Linux reference build (Correction 4), after which 11.8 and amd64 are only compute.
 
 ---
 
@@ -310,8 +310,8 @@ Packaging without CI means release artifacts built by hand on one Mac.
 
   > Started: [.github/workflows/test.yml](.github/workflows/test.yml) runs hygiene and the
   > translator unit tests on amd64 and arm64. Those are the two layers that need no MariaDB
-  > and no oracle, so they are exactly what CI can run before M9.0.3's correction 4 is
-  > resolved. Verified by running the same two commands in the container on both
+  > and no reference mongod, so they are exactly what CI can run before M9.0.3's correction 4
+  > is resolved. Verified by running the same two commands in the container on both
   > architectures — 73/73 each.
 - [ ] **M9.6.2** `package.yml`: builds every artifact in M9.2–M9.4 and runs M9.5 on each.
 - [ ] **M9.6.3** `release.yml`: on tag, publishes `.deb`s to GitHub Releases, pushes the
@@ -377,7 +377,7 @@ by tailing the M5 oplog. No server `VECTOR` type, parser, or optimizer support r
 
 **Why it is not in the release.** It is plausibly larger than M1–M7 combined — a graph index,
 its transactional maintenance, an async reconciler, and a query surface — and it is the only
-part of the system with **no differential oracle**, because community mongod has no
+part of the system with **nothing to diff against**, because community mongod has no
 `$vectorSearch`. Golden files would be the weakest evidence in the project, in its most
 intricate component. M6 demonstrated what golden-ish testing misses.
 
@@ -387,9 +387,9 @@ intricate component. M6 demonstrated what golden-ish testing misses.
 2. **11.8 has a native `VECTOR` type. Do we use it when present?** Using it violates rule 4's
    "identical on both versions"; ignoring it means deliberately shipping a slower path on the
    newer LTS. The current backlog line assumes the second without arguing for it.
-3. What is the correctness bar with no oracle? Recall parity against a reference
-   implementation? A brute-force exact search as the referee for small datasets — which is
-   cheap and would be genuinely convincing?
+3. What is the correctness bar with nothing to diff against? Recall parity against a
+   reference implementation? A brute-force exact search as the referee for small datasets —
+   which is cheap and would be genuinely convincing?
 
 **Notes.** Porting the neighbor-selection heuristic from
 [mariadb-server/sql/vector_mhnsw.cc](mariadb-server/sql/vector_mhnsw.cc) is license-compatible

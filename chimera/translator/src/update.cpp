@@ -137,7 +137,7 @@ UpdateResult apply_update(const bson_t* doc, const bson_t* update) {
 
   if (!has_operators) {
     // Replacement: the new document wins, but _id is immutable — and stays the
-    // first field, which is where the oracle leaves it.
+    // first field, which is where the reference leaves it.
     Bson replacement;
     auto id = path_get(doc, {"_id"});
     if (id) bson_append_value(replacement.get(), "_id", 3, &id->get());

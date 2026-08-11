@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ground rule 1 (SSPL hygiene): the mongodb/ tree is a black-box test oracle and
+# Ground rule 1 (SSPL hygiene): the mongodb/ tree is a black-box reference and
 # client binary. No ChimeraDB source may include, link, or vendor anything from
 # it. This gate keeps that provable rather than aspirational.
 #
@@ -10,7 +10,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 (($# == 0)) || die "check-hygiene.sh takes no arguments"
 
 # Source and build inputs only — the test scripts legitimately *invoke* the
-# oracle binaries by path, which is the one permitted kind of reference.
+# reference binaries by path, which is the one permitted kind of dependency.
 find_sources() {
   find "$CHIMERA_DIR" \
     -path "$CHIMERA_DIR/translator/build" -prune -o \

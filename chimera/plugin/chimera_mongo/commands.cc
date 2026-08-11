@@ -862,7 +862,7 @@ Bson cmd_find_and_modify(Ctx& ctx) {
 // ---------------------------------------------------------------- namespaces
 
 Bson cmd_create(Ctx& ctx) {
-  // Creating a collection that already exists is a no-op on the oracle, so long
+  // Creating a collection that already exists is a no-op on the reference, so long
   // as the options match — and we accept no options yet.
   Collection(ctx.sql(), ctx.ns()).create(/*error_if_exists=*/false);
   return ok_reply();

@@ -1,7 +1,7 @@
 # Replace "oracle" terminology with "reference"
 
 **Date:** 2026-08-10
-**Status:** planned, not executed
+**Status:** done — executed 2026-08-10, verification below all green
 **Why:** "test oracle" is standard differential-testing vocabulary, but this is a MariaDB
 project — a fork that exists *because* Oracle Corp bought MySQL — so "oracle mongod" reads
 as "Oracle's mongod" to exactly the audience this repo addresses. "Reference" (as in
@@ -25,9 +25,9 @@ just says *reference*.
 
 ## Inventory (first-party occurrences as of 2026-08-10)
 
-- [ ] **Shared script vars** — the single source everything else inherits:
+- [x] **Shared script vars** — the single source everything else inherits:
   - [chimera/scripts/_common.sh](chimera/scripts/_common.sh#L73-L75) — the three `ORACLE_*` variables
-- [ ] **Consumers of those vars** (mechanical rename + local comments):
+- [x] **Consumers of those vars** (mechanical rename + local comments):
   - [chimera/tests/differential/run.sh](chimera/tests/differential/run.sh) — heaviest: vars,
     locals, `stop_oracle` trap, `$RUN_DIR/oracle/` paths, `.oracle[.raw]` transcript
     suffixes, header + inline prose (~20 spots)
@@ -37,7 +37,7 @@ just says *reference*.
     [demo-gateways.sh](chimera/scripts/demo-gateways.sh) (1)
   - [chimera/tests/meteor/probe-meteor.sh](chimera/tests/meteor/probe-meteor.sh#L54) (1)
   - [chimera/scripts/check-hygiene.sh](chimera/scripts/check-hygiene.sh#L2) (2, comments only)
-- [ ] **Docs:**
+- [x] **Docs:**
   - [chimeraDB-plan.md](chimeraDB-plan.md) — 13 spots: doc-map intro (L18), ground rule 1
     (L57, keeps the parenthetical), repo-layout comment (L81), port table (L102), M0
     as-built table (L118), M0.5.2 (L190), M3.7 (L309), M4 correction notes (L358, L375),
@@ -46,11 +46,13 @@ just says *reference*.
     says "against a reference", so the sentence must be reworded to avoid
     "reference vs reference" (e.g. "correctness bar with nothing to diff against")
   - [chimera/README.md](chimera/README.md#L5) — 2 spots (L5, L57)
-- [ ] **Code comments** (no behavior change):
+  - [changestream-plan.md](changestream-plan.md) — 5 spots, written after this plan was
+    drafted: CS5.1 (3), CS5.2, exit criteria, two risk-table rows
+- [x] **Code comments** (no behavior change):
   - [chimera/plugin/chimera_mongo/collection.cc](chimera/plugin/chimera_mongo/collection.cc#L98) (L98, L253)
   - [chimera/plugin/chimera_mongo/commands.cc](chimera/plugin/chimera_mongo/commands.cc#L863)
   - [chimera/translator/src/update.cpp](chimera/translator/src/update.cpp#L140)
-- [ ] **Housekeeping:** delete stale `chimera/.run/oracle/` (gitignored runtime artifact;
+- [x] **Housekeeping:** delete stale `chimera/.run/oracle/` (gitignored runtime artifact;
   regenerated under the new name on next differential run — the "oracle" strings inside
   its mongod.log are just the old path echoed back)
 
@@ -72,10 +74,14 @@ just says *reference*.
 ## Verification
 
 1. `grep -rni oracle *.md chimera/ --exclude-dir=.run` → exactly one hit: the ground-rule-1
-   parenthetical.
+   parenthetical. ✅
 2. `chimera/tests/differential/run.sh --server 10.11` and `--server 11.8` green (rule 4) —
-   proves the transcript-suffix and path renames hold together.
-3. `chimera/scripts/check-hygiene.sh` still green.
+   proves the transcript-suffix and path renames hold together. ✅ 8/8 each
+3. `chimera/scripts/check-hygiene.sh` still green. ✅ (plus `demo-gateways.sh --server 11.8`,
+   to exercise a `REFERENCE_MONGO` consumer outside the differential harness)
+
+One wording change beyond the table: check-hygiene.sh's "the one permitted kind of
+reference" became "…kind of dependency", for the same collision reason as release-plan.md's.
 
 ## Commit
 
