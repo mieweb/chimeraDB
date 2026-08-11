@@ -52,6 +52,8 @@ just says *reference*.
   - [chimera/plugin/chimera_mongo/collection.cc](chimera/plugin/chimera_mongo/collection.cc#L98) (L98, L253)
   - [chimera/plugin/chimera_mongo/commands.cc](chimera/plugin/chimera_mongo/commands.cc#L863)
   - [chimera/translator/src/update.cpp](chimera/translator/src/update.cpp#L140)
+- [x] **Missed by the inventory above** — `.github/` was never swept:
+  [.github/workflows/test.yml](.github/workflows/test.yml#L5) (1, comment)
 - [x] **Housekeeping:** delete stale `chimera/.run/oracle/` (gitignored runtime artifact;
   regenerated under the new name on next differential run — the "oracle" strings inside
   its mongod.log are just the old path echoed back)
@@ -79,6 +81,9 @@ just says *reference*.
    proves the transcript-suffix and path renames hold together. ✅ 8/8 each
 3. `chimera/scripts/check-hygiene.sh` still green. ✅ (plus `demo-gateways.sh --server 11.8`,
    to exercise a `REFERENCE_MONGO` consumer outside the differential harness)
+4. Whole-repo sweep (everything but the third-party trees and gitignored artifacts) →
+   the ground-rule-1 parenthetical and this file. ✅ It caught one miss: the CI workflow,
+   which the inventory's "docs + scripts" framing had skipped.
 
 One wording change beyond the table: check-hygiene.sh's "the one permitted kind of
 reference" became "…kind of dependency", for the same collision reason as release-plan.md's.

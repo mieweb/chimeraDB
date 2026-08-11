@@ -2,7 +2,7 @@
 #
 # Script-first: every step is one line that a developer runs the same way. The
 # server-dependent layers are missing on purpose, not by oversight — they need a
-# MongoDB oracle built for Linux, which this checkout does not have
+# MongoDB reference built for Linux, which this checkout does not have
 # (release-plan.md M9.0.3, correction 4). M9.6.1 finishes this file.
 name: test
 
