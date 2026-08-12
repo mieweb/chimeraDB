@@ -41,10 +41,25 @@ stop_reference() {
 trap stop_reference EXIT
 
 note "starting reference mongod on port $REFERENCE_MONGO_PORT"
+# A single-node replica set, not because we replicate anything, but because a
+# standalone mongod refuses `$changeStream` outright — change streams are defined
+# on the oplog, and only a replica set has one. Everything else about the
+# reference is unchanged, so the existing specs' transcripts do not move.
 "$REFERENCE_MONGOD" --dbpath "$REFERENCE_DATA" --port "$REFERENCE_MONGO_PORT" \
-  --bind_ip 127.0.0.1 --logpath "$REFERENCE_LOG" --logappend --fork >/dev/null
+  --replSet rs0 --bind_ip 127.0.0.1 --logpath "$REFERENCE_LOG" --logappend --fork >/dev/null
 reference_pid=$(cat "$REFERENCE_DATA/mongod.lock")
 [[ -n $reference_pid ]] || die "reference mongod did not report a pid — see $REFERENCE_LOG"
+
+# The data directory is reused between runs, so the set is initiated once and
+# already configured every time after. Either way we wait for it to be PRIMARY:
+# an un-elected node answers reads with NotWritablePrimary and every spec would
+# fail for a reason that has nothing to do with chimera.
+"$REFERENCE_MONGO" --quiet --port "$REFERENCE_MONGO_PORT" --eval '
+  try { rs.initiate({_id: "rs0", members: [{_id: 0, host: "127.0.0.1:'"$REFERENCE_MONGO_PORT"'"}]}); }
+  catch (e) { if (e.codeName !== "AlreadyInitialized") throw e; }
+  for (let i = 0; i < 100 && !db.hello().isWritablePrimary; i++) sleep(100);
+  if (!db.hello().isWritablePrimary) throw new Error("reference never became primary");
+' >/dev/null || die "reference replica set did not come up — see $REFERENCE_LOG"
 
 # Anything that legitimately differs between two independent servers: generated
 # ids, wall-clock stamps, cursor handles and replication bookkeeping. Everything

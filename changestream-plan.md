@@ -227,8 +227,9 @@ reach it. Model the tests on [test_oplog.cpp](chimera/tests/unit/test_oplog.cpp)
   so `MIN(seq)` exists whenever anything was ever written and the CS3.3 predicate is
   decidable. An empty-since-birth oplog receiving any token is also 286 (a token cannot
   legitimately exist). Extend the pruner knob docs accordingly.
-- [ ] **CS3.5** `killCursors` already kills tail cursors via the registry — add a spec
-  assertion, don't assume.
+- [x] **CS3.5** `killCursors` already kills tail cursors via the registry — add a spec
+  assertion, don't assume. Asserted twice: in the differential spec, where both servers
+  agree the following `getMore` is `CursorNotFound`, and in demo-changestream.sh.
 
 ### Phase 4 — `operationTime` plumbing (the fence story)
 
@@ -239,12 +240,14 @@ Scope-check against CS0.4 findings first.
   `operationTime` in replies.
 - [x] **CS4.2** `ping` reply gains `operationTime` — Meteor uses it twice (start-time pin
   §2.2, caught-up floor §2.5-adjacent). Cheap, unconditional.
-- [ ] **CS4.3** Write replies (`insert`, `update`, `delete`, `findAndModify` if/where it
+- [x] **CS4.3** Write replies (`insert`, `update`, `delete`, `findAndModify` if/where it
   exists) gain `operationTime` read **inside the same transaction, after the
   statement** — the trigger has already stamped the clock row under its lock at that
   point, so this returns exactly *our* write's stamp (multi-row writes: the last stamp,
-  which is what a fence wants). Verify with a unit-style SQL check in the differential
-  spec: reply `operationTime` equals the `ts` of the write's own oplog row.
+  which is what a fence wants). Asserted in demo-changestream.sh rather than the
+  differential spec: the check is that a stream opened at the reply's `operationTime`
+  begins with that very write, and the reference build will not open a stream in the
+  past at all (see CS5.2), so there is nothing there to compare against.
 - [ ] **CS4.4** End-to-end fence check (deferred until Phase 6 app exists, listed here for
   scope): a Meteor method that writes and returns must not resolve on the client before
   the subscription shows the write. Meteor logs
@@ -252,11 +255,11 @@ Scope-check against CS0.4 findings first.
 
 ### Phase 5 — Differential + regression coverage
 
-- [ ] **CS5.1** The reference mongod (8.0.12) must answer `$changeStream`, which requires a
+- [x] **CS5.1** The reference mongod (8.0.12) must answer `$changeStream`, which requires a
   replica set: teach the differential harness ([chimera/tests/differential/](chimera/tests/differential/))
   to start the reference with `--replSet rs0` + `rs.initiate()` (one-node). Existing specs
   must stay byte-identical — this flips nothing else about the reference.
-- [ ] **CS5.2** New spec `chimera/tests/differential/specs/changestreams.js` following the
+- [x] **CS5.2** New spec `chimera/tests/differential/specs/changestreams.js` following the
   [cursors.js](chimera/tests/differential/specs/cursors.js) house style, covering at
   minimum: open with empty pipeline → empty `firstBatch` + nonzero id; insert/replace
   ('u')/delete event shapes (compare `operationType`, `documentKey`, `fullDocument` —
@@ -265,7 +268,12 @@ Scope-check against CS0.4 findings first.
   on a quiet stream returns empty batch with a PBRT; `killCursors`; bogus token → error
   class; extra stage after `$changeStream` → error on chimera (reference differs here —
   fence it as a documented divergence, like other `not_implemented` fences).
-- [ ] **CS5.3** Unit + differential + existing suites green on both versions
+  A second divergence turned up and is fenced the same way: asked to resume from a token
+  whose following events are already in the oplog, the reference build replays nothing
+  and opens at the head of the stream instead, while chimera replays the gap. The spec
+  therefore opens its streams before the writes they observe, and replay is asserted
+  against chimera directly in demo-changestream.sh.
+- [x] **CS5.3** Unit + differential + existing suites green on both versions
   (`chimera/scripts/test.sh --server 10.11` and `--server 11.8`), 8/8 + new spec.
 
 ### Phase 6 — Meteor 3.5 acceptance (the actual bar, mirrors M6)
@@ -286,9 +294,12 @@ Scope-check against CS0.4 findings first.
   `METEOR_REACTIVITY_ORDER=oplog,polling` still pass M6.3/M6.4 behavior — we now serve
   *both* generations of Meteor reactivity.
 - [ ] **CS6.6** Repeat CS6.1–CS6.3 on the 10.11 build.
-- [ ] **CS6.7** Demo script `chimera/scripts/demo-changestream.sh --server <v>` in the
+- [x] **CS6.7** Demo script `chimera/scripts/demo-changestream.sh --server <v>` in the
   house style of [demo-oplog.sh](chimera/scripts/demo-oplog.sh): shell A `watch()`es,
   shell B writes over the wire, shell C writes via `mariadb` — all events stream to A.
+  Landed early, in Phase 5, because it is where the assertions the differential suite
+  cannot make ended up living: replay after a token (CS5.2), the `operationTime` fence
+  (CS4.3) and the pruner's never-empty guarantee (CS3.4).
 
 ### Phase 7 — Docs & bookkeeping (same PR as the code they describe)
 
@@ -315,7 +326,7 @@ Scope-check against CS0.4 findings first.
 - [ ] A raw-SQL `INSERT` via the `mariadb` client appears live in the browser through a change stream.
 - [ ] Meteor ≤3.4 / forced-oplog behavior unchanged (full existing suite green).
 - [ ] A pruned-away resume token produces `ChangeStreamHistoryLost` (286) and Meteor visibly recovers (log line + UI converges).
-- [ ] Differential spec green against the replica-set reference; divergences fenced and documented, never silent.
+- [x] Differential spec green against the replica-set reference; divergences fenced and documented, never silent.
 
 ## 7. Non-goals (documented divergences — say so in the README, fail loudly in code)
 
