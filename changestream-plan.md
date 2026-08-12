@@ -163,11 +163,11 @@ users an escape hatch before the feature lands.
 Follow the M7.1 precedent: anything decidable without a server lives where ctest can
 reach it. Model the tests on [test_oplog.cpp](chimera/tests/unit/test_oplog.cpp).
 
-- [ ] **CS1.1** Resume-token codec: `seq (uint64) ⇄ {"_data": "<016x lowercase hex>"}`.
+- [x] **CS1.1** Resume-token codec: `seq (uint64) ⇄ {"_data": "<016x lowercase hex>"}`.
   Reject junk loudly (wrong type, odd length, non-hex) with the same error a driver
   would classify as non-resumable. Pure functions, new file pair
   `chimera/translator/{include/chimera,src}/changestream.{h,cpp}`.
-- [ ] **CS1.2** `$changeStream` option validation as a pure function: BSON stage body in →
+- [x] **CS1.2** `$changeStream` option validation as a pure function: BSON stage body in →
   parsed options out. Accept `fullDocument` (any of `default`, `updateLookup`,
   `whenAvailable`, `required` — we always have the post-image, so all are satisfiable),
   `fullDocumentBeforeChange` (`off`/`whenAvailable` accepted; `required` →
@@ -176,7 +176,7 @@ reach it. Model the tests on [test_oplog.cpp](chimera/tests/unit/test_oplog.cpp)
   (whole-cluster watch), database-level watch (`aggregate: 1`), `showExpandedEvents`.
   Exactly one resume origin may be present (server error `40674` shape: mutually
   exclusive) — test each pair.
-- [ ] **CS1.3** Unit tests for both, including round-trips and the mutual-exclusion
+- [x] **CS1.3** Unit tests for both, including round-trips and the mutual-exclusion
   matrix. `ctest` green.
 
 ### Phase 2 — Open the stream (plugin: `aggregate` + registry)

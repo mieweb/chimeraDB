@@ -18,6 +18,7 @@ message(STATUS "chimera: using ${BSON_MODULE_NAME} ${BSON_VERSION}")
 
 add_library(chimera_translator STATIC
   src/bson.cpp
+  src/changestream.cpp
   src/codec.cpp
   src/error.cpp
   src/filter.cpp

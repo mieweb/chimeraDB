@@ -28,6 +28,9 @@ TranslatorError duplicate_key(const std::string& message) {
 TranslatorError cursor_not_found(const std::string& message) {
   return {43, "CursorNotFound", message};
 }
+TranslatorError change_stream_options_conflict(const std::string& message) {
+  return {40674, "Location40674", message};
+}
 TranslatorError internal_error(const std::string& message) {
   return {1, "InternalError", message};
 }

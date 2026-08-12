@@ -10,6 +10,7 @@ add_executable(translator_tests
   test_update.cpp
   test_query.cpp
   test_oplog.cpp
+  test_changestream.cpp
   test_pipeline.cpp
   test_gateway.cpp
 )
