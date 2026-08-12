@@ -303,6 +303,24 @@ by the storage engine itself — and a MongoDB-compatible front door on top.
 ChimeraDB advertises exactly what it implements in the `hello` handshake — it
 never lies to a driver about features.
 
+### Meteor 3.5 and later: set the reactivity order
+
+Meteor 3.5 made **change streams** its default reactivity driver, trying
+`changeStreams → oplog → polling` and picking the first one the server appears
+to offer. ChimeraDB presents a replica set (it has to, for oplog tailing), so a
+3.5 app selects change streams — and change streams are not implemented yet, so
+`watch()` fails and Meteor retries it in a backoff loop instead of falling back.
+
+Until [changestream-plan.md](changestream-plan.md) lands, tell Meteor to skip
+the driver ChimeraDB does not serve:
+
+```sh
+export METEOR_REACTIVITY_ORDER=oplog,polling
+```
+
+Meteor 3.4 and earlier are unaffected — the oplog driver is already their first
+choice.
+
 ## Building from source
 
 Everything is scripted (the scripts are the documentation of record):

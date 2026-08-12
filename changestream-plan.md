@@ -140,20 +140,20 @@ raise `not_implemented` with a message naming this file — never a silent no-op
 The goal is to know exactly what stock Meteor 3.5 does against today's chimera, and give
 users an escape hatch before the feature lands.
 
-- [ ] **CS0.1** Scaffold a second probe app on Meteor 3.5.1 next to the existing one
+- [x] **CS0.1** Scaffold a second probe app on Meteor 3.5.1 next to the existing one
   (same layout as [chimera/tests/meteor/](chimera/tests/meteor/README.md); keep the
   3.3.1 todos app — it becomes the oplog-fallback regression). Point it at chimera
   (`run-meteor.sh` pattern) with **no** reactivity override, and record in this file
   what actually happens: does the availability check pass (expected: yes, via
   `setName`) and does `watch()`'s failure loop or fall back? Attach the chimera error
   log lines and the Meteor console output below in § Findings.
-- [ ] **CS0.2** Verify the assumed stopgap works: same app with
+- [x] **CS0.2** Verify the assumed stopgap works: same app with
   `METEOR_REACTIVITY_ORDER=oplog,polling` must behave exactly like the 3.3.1 app
   (oplog tailing, reactive todos, `mariadb` INSERT appears live).
-- [ ] **CS0.3** Document the stopgap where users will look: a short "Meteor 3.5+" note in
+- [x] **CS0.3** Document the stopgap where users will look: a short "Meteor 3.5+" note in
   [README § Compatibility](README.md#compatibility) (change streams are *coming*, until
   then set the reactivity order) and in [chimera/tests/meteor/README.md](chimera/tests/meteor/README.md).
-- [ ] **CS0.4** Confirm where Meteor's fence gets its target timestamp from (read
+- [x] **CS0.4** Confirm where Meteor's fence gets its target timestamp from (read
   [`mongo_common.js`](https://github.com/meteor/meteor/blob/devel/packages/mongo/mongo_common.js)
   — `fenceWriteTsKey`, `_csTargetTsByCollection`): confirm or refute "write replies must
   carry `operationTime`" (§2.8). Adjust Phase 4's scope in this file if refuted.
@@ -338,5 +338,58 @@ Scope-check against CS0.4 findings first.
 
 ## 9. Findings (fill in during Phase 0)
 
-> *CS0.1 —* …
-> *CS0.4 —* …
+*CS0.1 — confirmed, and worse than a clean failure.* Meteor 3.5.1 (`mongo@2.5.0`,
+`npm-mongo@6.16.2`) against chimera 11.8 with no override: the app boots, serves the
+page, and the availability check passes exactly as predicted — chimera's `setName` and
+wire version 17 are enough. Then `watch()` fails and Meteor loops:
+
+```
+ChangeStream error: {
+  collectionName: 'links', driverCount: 1, resumeTokenPresent: false,
+  error: MongoServerError: unsupported aggregation stage: $changeStream
+  ... errorResponse: { ok: 0, code: 238, codeName: 'NotImplemented' }
+}
+ChangeStream closed unexpectedly, scheduling restart: { collectionName: 'links', ... }
+```
+
+8 restarts and climbing on an idle app. There is **no fallback** to the oplog driver:
+the `changeStreams → oplog → polling` choice is made once, at driver-selection time, and
+a runtime failure only schedules a restart of the driver already chosen. Our
+`not_implemented` (238) is the right answer to the wrong question — the collection is
+simply never reactive. Note the failure is per *collection*, so a real app degrades one
+subscription at a time rather than crashing.
+
+*CS0.2 — the stopgap holds.* Same app, same build, `METEOR_REACTIVITY_ORDER=oplog,polling`:
+zero `ChangeStream` lines in the log, and an
+`INSERT INTO meteor.links (_id, doc) VALUES (…)` from the `mariadb` client appeared in
+the open browser with no refresh. Meteor 3.5 is fully usable against chimera today
+provided it is told which driver to pick.
+
+*CS0.4 — confirmed, with a correction to the mechanism.* Read from the isopack that will
+actually run (`~/.meteor/packages/mongo/.2.5.0*/os/`), not from `devel`. §2.8's
+conclusion stands but the timestamp does **not** come from the reply document Meteor
+inspects itself. Each write starts an explicit driver session, passes it to the
+operation, and annotates the fence from the *session's* clock afterwards:
+
+```js
+const session = self.client.startSession();
+return self.rawCollection(collection_name).insertOne(…, { safe: true, session })
+  .then(async ({insertedId}) => {
+    _annotateFenceWithWriteTs(DDPServer._getCurrentFence(), self, collection_name,
+                              session.operationTime);
+```
+
+`session.operationTime` is advanced by the Node driver from the **top-level
+`operationTime` of the command reply**, so Phase 4's requirement is unchanged: write
+replies must carry it. What the correction buys us is the failure mode —
+`_annotateFenceWithWriteTs` begins `if (!fence || !writeTs …) return;`, so a missing
+`operationTime` is silently *no fence at all*, not a hang. Methods return early and the
+client briefly renders stale data. That is invisible in a demo and only shows up under
+load, which is why CS4.3 asserts the timestamp against the write's own oplog row rather
+than trusting the app to look wrong.
+
+Two further points fell out of the same reading, both matching §2 as written:
+`shared_change_stream.js` does pin its start time with `db.command({ ping: 1 })` and
+`pingRes?.operationTime` (§2.2), and opens with
+`collection.watch([], { fullDocument: 'updateLookup', fullDocumentBeforeChange:
+'whenAvailable', … })` (§2.3). No rework needed.

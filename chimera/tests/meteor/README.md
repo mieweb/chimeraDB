@@ -19,7 +19,30 @@ through without waiting on a Node build each time.
 | Script | Purpose |
 | --- | --- |
 | `probe-meteor.sh --server <v>` | List unimplemented commands on the Meteor startup path |
-| `run-meteor.sh --server <v> [--reset]` | Scaffold (once) and run the app on http://localhost:3000 |
+| `run-meteor.sh --server <v> [--release <x.y.z>] [--reactivity <order>] [--reset]` | Scaffold (once) and run the app on http://localhost:3000 |
+
+## Which release, and which driver
+
+Which reactivity driver Meteor picks is a property of the *release*, so the
+release is pinned and both generations are kept scaffolded side by side under
+`chimera/.run/meteor/todos-<release>`:
+
+| Release | Default driver | Command |
+| --- | --- | --- |
+| 3.3.1 | oplog tailing | `run-meteor.sh --server <v>` |
+| 3.5.1 | change streams | `run-meteor.sh --server <v> --release 3.5.1` |
+
+Meteor 3.5 tries `changeStreams → oplog → polling` and picks the first driver
+the server appears to offer. ChimeraDB presents a replica set, so 3.5 selects
+change streams — which are not implemented yet, so `watch()` fails with
+`NotImplemented` and Meteor retries in a backoff loop rather than falling back
+(the fallback is decided once, at driver-selection time). Until
+[changestream-plan.md](../../../changestream-plan.md) lands, force the driver
+Meteor does have a server for:
+
+```sh
+run-meteor.sh --server 11.8 --release 3.5.1 --reactivity oplog,polling
+```
 
 The manual half of the milestone, which no script can assert: open two browsers,
 add a todo in one and watch it appear in the other; then `INSERT` a todo with
