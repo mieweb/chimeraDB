@@ -234,10 +234,10 @@ reach it. Model the tests on [test_oplog.cpp](chimera/tests/unit/test_oplog.cpp)
 
 Scope-check against CS0.4 findings first.
 
-- [ ] **CS4.1** Helper in the plugin: current `(ts_t, ts_i)` read from
+- [x] **CS4.1** Helper in the plugin: current `(ts_t, ts_i)` read from
   `chimera_meta.oplog_clock` (one indexed-PK row; inside the caller's session). Used as
   `operationTime` in replies.
-- [ ] **CS4.2** `ping` reply gains `operationTime` — Meteor uses it twice (start-time pin
+- [x] **CS4.2** `ping` reply gains `operationTime` — Meteor uses it twice (start-time pin
   §2.2, caught-up floor §2.5-adjacent). Cheap, unconditional.
 - [ ] **CS4.3** Write replies (`insert`, `update`, `delete`, `findAndModify` if/where it
   exists) gain `operationTime` read **inside the same transaction, after the

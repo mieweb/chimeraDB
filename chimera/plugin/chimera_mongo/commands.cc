@@ -312,9 +312,12 @@ Bson cursor_reply(int64_t cursor_id, const std::string& ns, const char* batch_na
 }
 
 // Top level, after `ok` — where a driver reads it, and where the session clock
-// that Meteor's write fence depends on gets advanced from.
-void append_operation_time(Bson& reply, SqlSession& sql) {
-  const OperationTime now = current_operation_time(sql);
+// that Meteor's write fence depends on gets advanced from. A caller that already
+// captured a stamp inside its own transaction passes it rather than re-reading,
+// because by now a neighbouring write may have moved the clock on.
+void append_operation_time(Bson& reply, SqlSession& sql,
+                           const std::optional<OperationTime>& stamp = std::nullopt) {
+  const OperationTime now = stamp ? *stamp : current_operation_time(sql);
   bson_append_timestamp(reply.get(), "operationTime", -1, now.t, now.i);
 }
 
@@ -682,11 +685,19 @@ void append_write_errors(bson_t* reply, const bson_t* errors) {
 // Each element of a write batch is its own transaction. Mongo does not make a
 // batch atomic, and rolling the whole batch back would discard the writes that
 // already succeeded before an unordered failure.
+//
+// `stamp`, when asked for, comes back holding the clock this write set. It is
+// read before the commit on purpose: the oplog trigger stamped that row under
+// its own lock inside this transaction, so here it is unambiguously ours, while
+// a read taken afterwards could pick up a concurrent write's later value. A
+// batch leaves the last element's stamp, which is what a fence waits on.
 template <typename Fn>
-void run_atomically(SqlSession& sql, Fn&& body) {
+void run_atomically(SqlSession& sql, Fn&& body,
+                    std::optional<OperationTime>* stamp = nullptr) {
   sql.begin();
   try {
     body();
+    if (stamp) *stamp = current_operation_time(sql);
   } catch (...) {
     sql.rollback();
     throw;
@@ -712,6 +723,7 @@ Bson cmd_insert(Ctx& ctx) {
   bson_t& errors = *error_list.get();
   int32_t inserted = 0;
   uint32_t slot = 0;
+  std::optional<OperationTime> stamp;
   const auto values = array_values(documents->get());
   for (size_t i = 0; i < values.size(); ++i) {
     bson_t document;
@@ -722,7 +734,7 @@ Bson cmd_insert(Ctx& ctx) {
       continue;
     }
     try {
-      run_atomically(ctx.sql(), [&] { collection.insert(&document); });
+      run_atomically(ctx.sql(), [&] { collection.insert(&document); }, &stamp);
       inserted++;
     } catch (const TranslatorError& e) {
       append_write_error(&errors, slot++, i, e);
@@ -732,6 +744,7 @@ Bson cmd_insert(Ctx& ctx) {
   append_write_errors(reply.get(), error_list.get());
   BSON_APPEND_INT32(reply.get(), "n", inserted);
   BSON_APPEND_DOUBLE(reply.get(), "ok", 1);
+  append_operation_time(reply, ctx.sql(), stamp);
   return reply;
 }
 
@@ -753,6 +766,7 @@ Bson cmd_update(Ctx& ctx) {
   Bson error_list;
   bson_t& errors = *error_list.get();
   uint32_t slot = 0;
+  std::optional<OperationTime> stamp;
   const auto values = array_values(updates->get());
   for (size_t i = 0; i < values.size(); ++i) {
     bson_t spec;
@@ -768,9 +782,13 @@ Bson cmd_update(Ctx& ctx) {
       if (!view_field(&spec, "u", &update)) throw failed_to_parse("update.u must be an object");
 
       UpdateOutcome outcome;
-      run_atomically(ctx.sql(), [&] {
-        outcome = collection.update(&filter, &update, flag(&spec, "multi"), flag(&spec, "upsert"));
-      });
+      run_atomically(
+          ctx.sql(),
+          [&] {
+            outcome =
+                collection.update(&filter, &update, flag(&spec, "multi"), flag(&spec, "upsert"));
+          },
+          &stamp);
       matched += static_cast<int32_t>(outcome.matched);
       modified += static_cast<int32_t>(outcome.modified);
       if (outcome.upserted) upserted.emplace_back(i, outcome.upserted_id);
@@ -800,6 +818,7 @@ Bson cmd_update(Ctx& ctx) {
     bson_append_array_end(reply.get(), &array);
   }
   BSON_APPEND_DOUBLE(reply.get(), "ok", 1);
+  append_operation_time(reply, ctx.sql(), stamp);
   return reply;
 }
 
@@ -817,6 +836,7 @@ Bson cmd_delete(Ctx& ctx) {
   Bson error_list;
   bson_t& errors = *error_list.get();
   uint32_t slot = 0;
+  std::optional<OperationTime> stamp;
   if (collection.exists()) {
     const auto values = array_values(deletes->get());
     for (size_t i = 0; i < values.size(); ++i) {
@@ -833,7 +853,8 @@ Bson cmd_delete(Ctx& ctx) {
         // `limit` is 0 for "every match" and 1 for "just one" — no other value.
         const bool just_one = number(&spec, "limit", 0) == 1;
         uint64_t n = 0;
-        run_atomically(ctx.sql(), [&] { n = collection.remove(&filter, just_one); });
+        run_atomically(
+            ctx.sql(), [&] { n = collection.remove(&filter, just_one); }, &stamp);
         removed += static_cast<int32_t>(n);
       } catch (const TranslatorError& e) {
         append_write_error(&errors, slot++, i, e);
@@ -844,6 +865,7 @@ Bson cmd_delete(Ctx& ctx) {
   append_write_errors(reply.get(), error_list.get());
   BSON_APPEND_INT32(reply.get(), "n", removed);
   BSON_APPEND_DOUBLE(reply.get(), "ok", 1);
+  append_operation_time(reply, ctx.sql(), stamp);
   return reply;
 }
 
@@ -873,6 +895,7 @@ Bson cmd_find_and_modify(Ctx& ctx) {
   bool updated_existing = false;
   Value upserted_id;
   bool did_upsert = false;
+  std::optional<OperationTime> stamp;
 
   run_atomically(ctx.sql(), [&] {
     std::vector<Bson> matches;
@@ -921,7 +944,7 @@ Bson cmd_find_and_modify(Ctx& ctx) {
         }
       }
     }
-  });
+  }, &stamp);
 
   Bson reply;
   bson_t* b = reply.get();
@@ -938,6 +961,7 @@ Bson cmd_find_and_modify(Ctx& ctx) {
     BSON_APPEND_NULL(b, "value");
   }
   BSON_APPEND_DOUBLE(b, "ok", 1);
+  append_operation_time(reply, ctx.sql(), stamp);
   return reply;
 }
 
@@ -1130,7 +1154,14 @@ Bson dispatch_command(const wire::Request& req, ConnectionState& state) noexcept
     if (command == "hello" || command == "isMaster" || command == "ismaster") {
       return hello_reply(state.identity(), state.connection_id());
     }
-    if (command == "ping") return ok_reply();
+    if (command == "ping") {
+      // Meteor pins a change stream's start time from a ping and later uses one
+      // to decide whether a stream has caught up, so the clock rides along here
+      // too. It costs a single-row primary-key read.
+      Bson reply = ok_reply();
+      append_operation_time(reply, state.sql());
+      return reply;
+    }
     if (command == "buildInfo" || command == "buildinfo") return build_info_reply();
     if (command == "replSetGetStatus") return repl_set_status_reply(state.identity());
     if (command == "getParameter") return get_parameter_reply(req.body.get());
