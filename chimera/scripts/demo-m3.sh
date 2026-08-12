@@ -37,7 +37,12 @@ note "3. the legacy OP_QUERY handshake works too — drivers open with it"
 check_eq "isMaster ok" "$(mongo_eval 'db.runCommand({isMaster:1}).ok')" "1"
 
 note "4. buildInfo reports a version consistent with the wire version"
-check_eq "buildInfo version" "$(mongo_eval 'db.runCommand({buildInfo:1}).version')" "6.0.0"
+# The release core is what drivers gate on; the -chimera-<version> suffix exists
+# so mongosh names what it is really talking to (see build_info_reply).
+check_eq "buildInfo version" \
+  "$(mongo_eval 'db.runCommand({buildInfo:1}).version.split("-")[0]')" "6.0.0"
+check_eq "buildInfo names chimera" \
+  "$(mongo_eval 'db.runCommand({buildInfo:1}).version.split("-")[1]')" "chimera"
 
 note "5. sessions are accepted and ignored"
 check_eq "endSessions ok" "$(mongo_eval 'db.runCommand({endSessions:[]}).ok')" "1"
