@@ -181,7 +181,7 @@ reach it. Model the tests on [test_oplog.cpp](chimera/tests/unit/test_oplog.cpp)
 
 ### Phase 2 — Open the stream (plugin: `aggregate` + registry)
 
-- [ ] **CS2.1** New `chimera/plugin/chimera_mongo/changestream.{h,cc}` (added to
+- [x] **CS2.1** New `chimera/plugin/chimera_mongo/changestream.{h,cc}` (added to
   [CMakeLists.txt](chimera/plugin/chimera_mongo/CMakeLists.txt)) holding: the
   change-event `CONCAT` SQL expression (sibling of `kEntryExpr`, per the mapping table
   in §4 — remember `JSON_QUOTE` for anything textual and the o2/absence rules), a
@@ -191,17 +191,17 @@ reach it. Model the tests on [test_oplog.cpp](chimera/tests/unit/test_oplog.cpp)
   - token → `after_seq = seq` (strictly after);
   - `startAtOperationTime (t,i)` → `after_seq = COALESCE(MAX(seq) WHERE ts_t < t OR (ts_t = t AND ts_i < i), 0)` (events at-or-after the time are delivered — matches server semantics);
   - none → `after_seq = oplog_head()` (start from "now").
-- [ ] **CS2.2** Extend `TailState` ([cursor.h](chimera/plugin/chimera_mongo/cursor.h)) with a
+- [x] **CS2.2** Extend `TailState` ([cursor.h](chimera/plugin/chimera_mongo/cursor.h)) with a
   `change_stream` flag + target `ns` string (the BSON `filter` member stays for plain
   oplog tails). Keep the struct dumb; the registry still never holds a SQL session.
-- [ ] **CS2.3** Intercept in [`cmd_aggregate`](chimera/plugin/chimera_mongo/commands.cc#L479):
+- [x] **CS2.3** Intercept in [`cmd_aggregate`](chimera/plugin/chimera_mongo/commands.cc#L479):
   first stage `$changeStream` → validate via CS1.2 (any *additional* stage after it →
   `not_implemented`; Meteor never sends one), resolve `after_seq`, open the tail cursor,
   reply with an **empty `firstBatch`**, `cursor.id != 0`, `cursor.ns = "<db>.<coll>"`,
   plus `cursor.postBatchResumeToken` (token of `after_seq`) and top-level
   `operationTime` (current clock — see CS4.1's helper). `$changeStream` anywhere but
   first, or on `local.oplog.rs`, or under `$sql` → `not_implemented`.
-- [ ] **CS2.4** Smoke test by hand with mongosh against a dev server:
+- [x] **CS2.4** Smoke test by hand with mongosh against a dev server:
   `db.parts.watch()` returns a live cursor; a wire insert in a second mongosh prints an
   `insert` event with correct `fullDocument`, token, `clusterTime`. (mongosh uses the
   same Node driver — this exercises the exact code path Meteor will.)

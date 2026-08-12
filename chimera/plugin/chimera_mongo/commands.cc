@@ -4,12 +4,15 @@
 
 #include <algorithm>
 #include <chrono>
+#include <optional>
 
+#include "chimera/changestream.h"
 #include "chimera/codec.h"
 #include "chimera/error.h"
 #include "chimera/pipeline.h"
 #include "chimera/project.h"
 #include "chimera/sort.h"
+#include "changestream.h"
 #include "collection.h"
 #include "cursor.h"
 #include "oplog.h"
@@ -283,7 +286,8 @@ std::vector<Bson> shape_results(std::vector<Bson> documents, const bson_t* sort,
 }
 
 Bson cursor_reply(int64_t cursor_id, const std::string& ns, const char* batch_name,
-                  const std::vector<Bson>& batch) {
+                  const std::vector<Bson>& batch,
+                  std::optional<uint64_t> resume_seq = std::nullopt) {
   Bson reply;
   bson_t* b = reply.get();
   bson_t cursor;
@@ -294,9 +298,24 @@ Bson cursor_reply(int64_t cursor_id, const std::string& ns, const char* batch_na
   bson_append_array_begin(&cursor, batch_name, -1, &array);
   for (uint32_t i = 0; i < batch.size(); ++i) append_indexed(&array, i, batch[i].get());
   bson_append_array_end(&cursor, &array);
+  // How a driver resumes across a quiet period: without it, a stream that has
+  // seen no events has no token to come back with but the one it opened on.
+  if (resume_seq) {
+    bson_t token;
+    BSON_APPEND_DOCUMENT_BEGIN(&cursor, "postBatchResumeToken", &token);
+    BSON_APPEND_UTF8(&token, "_data", encode_resume_token(*resume_seq).c_str());
+    bson_append_document_end(&cursor, &token);
+  }
   bson_append_document_end(b, &cursor);
   BSON_APPEND_DOUBLE(b, "ok", 1);
   return reply;
+}
+
+// Top level, after `ok` — where a driver reads it, and where the session clock
+// that Meteor's write fence depends on gets advanced from.
+void append_operation_time(Bson& reply, SqlSession& sql) {
+  const OperationTime now = current_operation_time(sql);
+  bson_append_timestamp(reply.get(), "operationTime", -1, now.t, now.i);
 }
 
 // `local.oplog.rs` is not a table but a view over chimera_meta.oplog. Meteor
@@ -335,18 +354,25 @@ Bson find_oplog(Ctx& ctx, const Namespace& ns) {
 }
 
 // A tailing getMore re-reads rather than draining a buffer, and parks when it
-// catches up so the client is not left polling.
+// catches up so the client is not left polling. A change-stream cursor takes the
+// same path: same table, same park/wake, one different SELECT.
 Bson tail_batch(Ctx& ctx, int64_t cursor_id, const Namespace& ns, const TailState& tail,
                 int32_t batch_size, int64_t max_time_ms) {
   const uint64_t wanted = static_cast<uint64_t>(std::max(batch_size, 1));
   const auto deadline = std::chrono::steady_clock::now() +
                         std::chrono::milliseconds(std::max<int64_t>(max_time_ms, 0));
 
+  // Checked every batch, not just on open: the pruner runs while a cursor is
+  // parked, and a gap must be reported rather than skipped over silently.
+  if (tail.change_stream) require_change_stream_history(ctx.sql(), tail.after_seq);
+
   OplogBatch batch;
   uint64_t next_after = tail.after_seq;
   for (;;) {
     const uint64_t head = oplog_head(ctx.sql());
-    batch = read_oplog(ctx.sql(), tail.filter.get(), tail.after_seq, wanted, false);
+    batch = tail.change_stream
+                ? read_changestream(ctx.sql(), ns, tail.after_seq, wanted)
+                : read_oplog(ctx.sql(), tail.filter.get(), tail.after_seq, wanted, false);
     next_after = batch.documents.size() >= wanted ? batch.last_seq : head;
     if (!batch.documents.empty() || !tail.await_data) break;
 
@@ -360,7 +386,12 @@ Bson tail_batch(Ctx& ctx, int64_t cursor_id, const Namespace& ns, const TailStat
   }
 
   CursorRegistry::instance().advance_tail(cursor_id, next_after);
-  return cursor_reply(cursor_id, ns.text(), "nextBatch", batch.documents);
+  if (!tail.change_stream) {
+    return cursor_reply(cursor_id, ns.text(), "nextBatch", batch.documents);
+  }
+  Bson reply = cursor_reply(cursor_id, ns.text(), "nextBatch", batch.documents, next_after);
+  append_operation_time(reply, ctx.sql());
+  return reply;
 }
 
 Bson cmd_find(Ctx& ctx) {
@@ -476,10 +507,61 @@ std::vector<Bson> take_sql_source(Ctx& ctx, std::vector<Bson>& stages) {
   return run_sql_gateway(ctx.sql(), statement).documents;
 }
 
+// `$changeStream` is a source stage like `$sql`: it produces events rather than
+// reshaping documents, so it only means anything first, and Meteor never sends
+// a stage after it (it filters per-driver in process). Opening returns an empty
+// firstBatch and a live cursor — every event arrives through getMore.
+Bson open_change_stream(Ctx& ctx, const std::vector<Bson>& stages) {
+  if (stages.size() > 1) {
+    throw not_implemented(
+        "$changeStream must be the only stage in the pipeline (see changestream-plan.md)");
+  }
+  // `aggregate: 1` is a whole-database watch; the argument is a collection name
+  // for every form we serve.
+  const Namespace ns = ctx.ns();
+  if (is_oplog_namespace(ns)) {
+    throw not_implemented(
+        "$changeStream on local.oplog.rs: tail it directly instead (see changestream-plan.md)");
+  }
+
+  const Value body = stage_operator(stages.front().get()).second;
+  if (body.type() != BSON_TYPE_DOCUMENT) {
+    throw type_mismatch("$changeStream takes a document of options");
+  }
+  bson_t options;
+  if (!bson_init_static(&options, body.get().value.v_doc.data, body.get().value.v_doc.data_len)) {
+    throw failed_to_parse("$changeStream options are not readable");
+  }
+  const ChangeStreamOptions opts = parse_change_stream(&options);
+
+  install_oplog_schema(ctx.sql());
+  const uint64_t after_seq = resolve_change_stream_start(ctx.sql(), opts);
+  require_change_stream_history(ctx.sql(), after_seq);
+
+  TailState tail;
+  tail.after_seq = after_seq;
+  tail.await_data = true;
+  tail.change_stream = true;
+  const int64_t cursor_id = CursorRegistry::instance().open_tail(ns.text(), std::move(tail));
+
+  Bson reply = cursor_reply(cursor_id, ns.text(), "firstBatch", {}, after_seq);
+  append_operation_time(reply, ctx.sql());
+  return reply;
+}
+
 Bson cmd_aggregate(Ctx& ctx) {
   bson_t pipeline;
   sub_document(ctx, "pipeline", &pipeline);
   std::vector<Bson> stages = pipeline_stages(&pipeline);
+
+  if (!stages.empty() && stage_operator(stages.front().get()).first == "$changeStream") {
+    return open_change_stream(ctx, stages);
+  }
+  for (const auto& stage : stages) {
+    if (stage_operator(stage.get()).first != "$changeStream") continue;
+    throw not_implemented(
+        "$changeStream is only valid as the first pipeline stage (see changestream-plan.md)");
+  }
 
   std::vector<Bson> documents;
   std::string ns_text;

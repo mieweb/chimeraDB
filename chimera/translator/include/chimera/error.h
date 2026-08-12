@@ -39,6 +39,9 @@ TranslatorError cursor_not_found(const std::string& message);
 // The three `$changeStream` resume origins are mutually exclusive. MongoDB
 // reports this from an anonymous assertion, so the codeName is the code.
 TranslatorError change_stream_options_conflict(const std::string& message);
+// The resume point has been pruned away. Drivers and Meteor both recover from
+// this by name: drop the token, reopen from a fresh time, reconcile.
+TranslatorError change_stream_history_lost(const std::string& message);
 TranslatorError internal_error(const std::string& message);
 
 }  // namespace chimera

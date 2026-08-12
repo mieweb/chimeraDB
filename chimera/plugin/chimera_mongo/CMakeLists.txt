@@ -45,6 +45,7 @@ MYSQL_ADD_PLUGIN(chimera_mongo
   collection.cc
   cursor.cc
   oplog.cc
+  changestream.cc
   projection.cc
   sqlgateway.cc
   mongogateway.cc

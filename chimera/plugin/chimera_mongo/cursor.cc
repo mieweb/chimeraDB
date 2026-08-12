@@ -58,9 +58,7 @@ bool CursorRegistry::tail_state(int64_t id, const std::string& ns, TailState* st
   auto it = cursors_.find(id);
   if (it == cursors_.end() || it->second.ns != ns || !it->second.tailing) return false;
   it->second.last_used_seconds = now_seconds();
-  state->filter = Bson::copy_of(it->second.tail.filter.get());
-  state->after_seq = it->second.tail.after_seq;
-  state->await_data = it->second.tail.await_data;
+  *state = it->second.tail.clone();
   return true;
 }
 

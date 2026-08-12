@@ -13,10 +13,28 @@ namespace chimera {
 // Where a tailing cursor has read up to, and how it should behave when it
 // catches up. Tailing cursors buffer nothing: each getMore re-reads the oplog,
 // so the registry never holds a SQL session or a blocked thread.
+//
+// A change stream is the same cursor reading the same table through a different
+// expression, so it is a flag here rather than a second registry: `filter` is
+// how a raw `local.oplog.rs` tail selects rows, `change_stream` means select by
+// the cursor's own namespace and render events instead of oplog entries.
 struct TailState {
   Bson filter;
   uint64_t after_seq = 0;
   bool await_data = false;
+  bool change_stream = false;
+
+  // Bson is move-only, so handing a caller its own copy needs a named clone.
+  // It lives next to the fields deliberately: the registry used to copy them
+  // one by one, which silently dropped `change_stream` the day it was added.
+  TailState clone() const {
+    TailState copy;
+    copy.filter = Bson::copy_of(filter.get());
+    copy.after_seq = after_seq;
+    copy.await_data = await_data;
+    copy.change_stream = change_stream;
+    return copy;
+  }
 };
 
 // Cursors are materialized: a find runs to completion and the remaining
