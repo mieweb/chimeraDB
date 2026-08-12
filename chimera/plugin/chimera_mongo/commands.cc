@@ -376,7 +376,13 @@ Bson tail_batch(Ctx& ctx, int64_t cursor_id, const Namespace& ns, const TailStat
     batch = tail.change_stream
                 ? read_changestream(ctx.sql(), ns, tail.after_seq, wanted)
                 : read_oplog(ctx.sql(), tail.filter.get(), tail.after_seq, wanted, false);
-    next_after = batch.documents.size() >= wanted ? batch.last_seq : head;
+    // A short batch means nothing else *matching* exists below the head, so the
+    // cursor skips the rows it filtered out rather than rescanning them forever.
+    // `head` is sampled before the query, so a write landing in between can leave
+    // it behind a row we just delivered — take whichever is further on, or that
+    // row comes back a second time.
+    next_after = batch.documents.size() >= wanted ? batch.last_seq
+                                                  : std::max(head, batch.last_seq);
     if (!batch.documents.empty() || !tail.await_data) break;
 
     const auto now = std::chrono::steady_clock::now();

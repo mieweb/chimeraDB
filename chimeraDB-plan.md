@@ -483,6 +483,12 @@ Lives in `chimera/translator/`, builds with its own CMake, tests with ctest.
 > driver select change streams — then fail at `watch()`. Serving `$changeStream` from
 > this same oplog, plus the stopgap for stock Meteor 3.5 until it lands, is specced with
 > checkboxes in **[changestream-plan.md](changestream-plan.md)**.
+>
+> **Delivered (2026-08-12):** `$changeStream` is served from this oplog table, and the
+> stopgap is retired — stock Meteor 3.5 is reactive on default settings, on both server
+> versions. `demo-changestream.sh` is the oplog demo's companion, and the same three-shell
+> party trick works through a change stream. Both generations of Meteor reactivity now run
+> off one table.
 
 ---
 
@@ -688,5 +694,6 @@ Tracked independently of this order:
 | Plugin API drift between 10.11 and 11.8 | Version guards kept minimal + commented; CI matrix catches breakage on every change |
 | SQL injection via generated WHERE clauses | Bind parameters only (M2.4); code review gate |
 | Meteor driver expectations beyond the plan | M6 gap-list process; stub honestly, never advertise unimplemented features in `hello` |
+| Meteor 3.5 change-stream expectations beyond [changestream-plan.md](changestream-plan.md) | Same gap-list process; the served subset is documented in the README and everything outside it is refused loudly, never accepted and ignored |
 | Oplog table growth | M5.4 pruning knobs; monitor row count in tests |
 | Bidirectional projections are trigger-maintained (no `GENERATED ALWAYS` guarantee) | Opt-in per column (D10); triggers generated from templates, never hand-edited; `chimera_verify_projection()` recomputes and reports drift |

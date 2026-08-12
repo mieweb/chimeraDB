@@ -295,31 +295,40 @@ by the storage engine itself — and a MongoDB-compatible front door on top.
 |---|---|
 | MariaDB (host server) | **10.11 LTS** and **11.8 LTS** |
 | Wire clients | `mongosh`, legacy `mongo` shell, official drivers (Node, Python, Go, …) |
-| Frameworks | **Meteor 2 & 3** (oplog tailing supported — first-class target), Mongoose, raw drivers |
-| Command surface | CRUD (`insert`/`find`/`update`/`delete`/`findAndModify`), cursors incl. **tailable + awaitData**, `count`/`distinct`, index & collection management, aggregation subset (`$match`, `$group`, `$sum`, `$count`, `$project`, `$sort`, `$limit`, `$skip`), sessions |
+| Frameworks | **Meteor 2, 3 and 3.5+** (both reactivity drivers — oplog tailing *and* change streams — first-class targets), Mongoose, raw drivers |
+| Command surface | CRUD (`insert`/`find`/`update`/`delete`/`findAndModify`), cursors incl. **tailable + awaitData**, **change streams** (see below), `count`/`distinct`, index & collection management, aggregation subset (`$match`, `$group`, `$sum`, `$count`, `$project`, `$sort`, `$limit`, `$skip`), sessions |
 | Storage encoding | MongoDB Extended JSON (canonical) — ObjectId, Date, Timestamp, Decimal128, Binary all round-trip |
-| Explicitly not supported | change streams, `$where` (server-side JS), map-reduce, sharding admin (`local.oplog.rs` tailing covers the reactive use case) |
+| Explicitly not supported | `$where` (server-side JS), map-reduce, sharding admin |
 
 ChimeraDB advertises exactly what it implements in the `hello` handshake — it
 never lies to a driver about features.
 
-### Meteor 3.5 and later: set the reactivity order
+### Change streams
 
-Meteor 3.5 made **change streams** its default reactivity driver, trying
-`changeStreams → oplog → polling` and picking the first one the server appears
-to offer. ChimeraDB presents a replica set (it has to, for oplog tailing), so a
-3.5 app selects change streams — and change streams are not implemented yet, so
-`watch()` fails and Meteor retries it in a backoff loop instead of falling back.
+`watch()` works on a collection: `$changeStream` as the first stage of an
+`aggregate`, resume tokens, `resumeAfter`/`startAfter`/`startAtOperationTime`,
+post-batch resume tokens and `operationTime` on write replies. Events carry
+`operationType`, `documentKey`, `fullDocument`, `ns` and `clusterTime`, and they
+see writes made through the plain `mariadb` client just as readily as writes made
+over the wire — both go through the same triggers.
 
-Until [changestream-plan.md](changestream-plan.md) lands, tell Meteor to skip
-the driver ChimeraDB does not serve:
+The subset is deliberate, and the parts outside it fail loudly rather than
+quietly doing nothing:
 
-```sh
-export METEOR_REACTIVITY_ORDER=oplog,polling
-```
+- Collection-level only. Database-wide (`aggregate: 1`) and cluster-wide watches
+  are refused.
+- An update is reported as `replace` with the full post-image, not as `update`
+  with an `updateDescription`. Our oplog records post-images; every driver and
+  Meteor handle `replace`.
+- No pre-images, and no stages after `$changeStream` — a `$match` there would be
+  accepted and then not applied, so it is refused instead.
+- A dropped collection's stream goes quiet rather than being invalidated.
 
-Meteor 3.4 and earlier are unaffected — the oplog driver is already their first
-choice.
+How much history a resuming client can rely on is an operator's decision, set by
+`chimera_mongo_oplog_max_rows` and `chimera_mongo_oplog_max_age_seconds`. Neither
+limit will delete the newest entry, so a caught-up client is never falsely told
+it has fallen behind; a client that genuinely has is told so by name, with
+`ChangeStreamHistoryLost`, and never silently skipped past the gap.
 
 ## Building from source
 

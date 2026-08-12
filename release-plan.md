@@ -288,8 +288,9 @@ where the bugs live.
 
 - [ ] **M9.5.1** `chimera/packaging/tests/smoke.sh` — against a **clean container with no
   source tree**: install, `chimeradb setup`, insert via a driver over the wire, read the same
-  row via SQL, watch it arrive in the oplog, call `mongo('db.c.findOne({})')` from the SQL
-  prompt. That subset covers M4, M5 and M7 through the packaged artifact only.
+  row via SQL, watch it arrive in the oplog, open a `$changeStream` and see a raw-SQL
+  `INSERT` arrive as an event, call `mongo('db.c.findOne({})')` from the SQL prompt. That
+  subset covers M4, M5 (both reactivity paths) and M7 through the packaged artifact only.
 - [ ] **M9.5.2** Matrix: {bookworm, ubuntu 24.04} × {10.11, 11.8} × {amd64, arm64}.
 - [ ] **M9.5.3** **Upgrade and purge are release-blocking tests.** A leftover
   `plugin_load_add=chimera_mongo` in a conf.d file after the `.so` is gone means `mariadbd`

@@ -150,13 +150,36 @@ gone=$(mongo_eval '
 check_eq "getMore after killCursors" "$gone" "1 CursorNotFound"
 
 note "the pruner never empties the oplog, so a resume question stays answerable"
-# Age every entry past the retention limit and let one background pass run. The
-# guard under test is that the newest row survives anyway: without it an idle
-# system would prune itself to nothing and then answer ChangeStreamHistoryLost to
-# a client that had missed nothing at all, because MIN(seq) is how that question
-# is decided. This throws away oplog history, so it runs last.
+# Two things are under test here, and one background stream exercises both.
+#
+# The stream opens, falls three events behind, and then parks. Meanwhile every
+# entry is aged past the retention limit and a background pruner pass runs. When
+# the stream finally asks for more it must be told ChangeStreamHistoryLost rather
+# than handed the surviving row as if nothing had been missed — the check belongs
+# on every batch, not only when a stream opens, because the pruner runs while
+# cursors are parked. And exactly one row must survive regardless of age, because
+# MIN(seq) is how that very question gets decided; an oplog that pruned itself to
+# nothing would answer "history lost" to a client that had missed nothing at all.
+#
+# This throws away oplog history, so it runs last.
+BEHIND_OUT="$RUN_DIR/$SERVER_VERSION/changestream-behind.txt"
+mongo_eval '
+  var d = db.getSiblingDB(NS_DB);
+  var s = d.runCommand({aggregate: NS_COLL, pipeline: [{$changeStream: {}}], cursor: {}});
+  for (var i = 0; i < 3; i++) {
+    d.runCommand({insert: NS_COLL, documents: [{_id: "behind-" + i}]});
+  }
+  sleep(20000);
+  print(d.runCommand({getMore: s.cursor.id, collection: NS_COLL}).codeName);
+' > "$BEHIND_OUT" 2>&1 &
+BEHIND_PID=$!
+
+sleep 2
 chimera_sql -e "UPDATE chimera_meta.oplog SET ts_t = ts_t - 200000"
-sleep 13
+wait "$BEHIND_PID" || true
+
+check_eq "a parked stream left behind by the pruner" "$(cat "$BEHIND_OUT")" \
+  "ChangeStreamHistoryLost"
 check_eq "rows left once every entry has aged out" \
   "$(chimera_sql -N -B -e "SELECT COUNT(*), MIN(seq) = MAX(seq) FROM chimera_meta.oplog" | tr '\t' ' ')" \
   "1 1"

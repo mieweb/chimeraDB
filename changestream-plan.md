@@ -304,18 +304,20 @@ Scope-check against CS0.4 findings first.
 
 ### Phase 7 — Docs & bookkeeping (same PR as the code they describe)
 
-- [ ] **CS7.1** [README § Compatibility](README.md#compatibility): move change streams out
+- [x] **CS7.1** [README § Compatibility](README.md#compatibility): move change streams out
   of "Explicitly not supported" into the supported table with its honest subset
   (collection-level watch, empty pipeline, resume via `startAfter`/`startAtOperationTime`,
   history-lost signalling; **no** pre-images / `updateDescription` / database- or
   cluster-level watch / `showExpandedEvents` / `invalidate` events). Update the Meteor
   positioning line — oplog tailing *and* change streams, Meteor ≤3.4 and 3.5+.
-- [ ] **CS7.2** Remove the CS0.3 stopgap notes (or demote to "only needed pre-vX").
-- [ ] **CS7.3** [chimera/README.md](chimera/README.md) architecture blurb + this file's
+- [x] **CS7.2** Remove the CS0.3 stopgap notes (or demote to "only needed pre-vX").
+  The forced-oplog invocation survives in the Meteor README as a regression check rather
+  than a workaround, which is what it now is.
+- [x] **CS7.3** [chimera/README.md](chimera/README.md) architecture blurb + this file's
   § Findings updated; tick the M5 sequel note in
   [chimeraDB-plan.md](chimeraDB-plan.md); add the feature to the release-plan packaging
   smoke test if v1 has not shipped by then.
-- [ ] **CS7.4** Risks table in chimeraDB-plan.md gains: "Meteor 3.5 change-stream driver
+- [x] **CS7.4** Risks table in chimeraDB-plan.md gains: "Meteor 3.5 change-stream driver
   expectations beyond this plan → gap-list process, stub honestly" (mirror of the M6
   risk line).
 
@@ -326,7 +328,7 @@ Scope-check against CS0.4 findings first.
 - [x] Stock Meteor 3.5.1 todos app is reactive against chimera with **zero configuration**, on the change-stream driver.
 - [x] A raw-SQL `INSERT` via the `mariadb` client appears live in the browser through a change stream.
 - [x] Meteor ≤3.4 / forced-oplog behavior unchanged (full existing suite green).
-- [ ] A pruned-away resume token produces `ChangeStreamHistoryLost` (286) and Meteor visibly recovers (log line + UI converges).
+- [x] A pruned-away resume token produces `ChangeStreamHistoryLost` (286) and Meteor visibly recovers (log line + UI converges).
 - [x] Differential spec green against the replica-set reference; divergences fenced and documented, never silent.
 
 ## 7. Non-goals (documented divergences — say so in the README, fail loudly in code)
@@ -405,3 +407,27 @@ Two further points fell out of the same reading, both matching §2 as written:
 `pingRes?.operationTime` (§2.2), and opens with
 `collection.watch([], { fullDocument: 'updateLookup', fullDocumentBeforeChange:
 'whenAvailable', … })` (§2.3). No rework needed.
+
+*CS5.2 — the referee will not replay, so the spec had to stop asking it to.* Handed a
+token whose following events are already in the oplog, the reference build used by the
+differential harness opens at the head of the stream and delivers none of them; its
+post-batch resume token advances past the gap while its batches come back empty. Verified
+four ways, including resuming from a `postBatchResumeToken` rather than an event `_id` to
+rule out the legacy shell mangling the token's `_typeBits`, and by writing a fresh event
+after the resumed stream was open — that one *is* delivered, which is what pins the
+diagnosis on the start position rather than on the stream being broken. Chimera replays
+the gap, which is the behaviour a reconnecting client depends on. The spec therefore
+opens every stream before the writes it observes and asserts only what both servers
+agree on; replay is asserted against chimera directly in `demo-changestream.sh`. The
+same constraint moved CS4.3's `operationTime` assertion there: a reference that will not
+open a stream in the past cannot be asked about a timestamp in the past.
+
+*Exit criterion 4 — the recovery is real, but Meteor does not narrate it.* Reproduced by
+pausing the Meteor server with `SIGSTOP`, writing past it, capping the oplog at a single
+row until the pruner discarded the history the subscription still needed, then resuming.
+The UI converged: every document written during the gap was present afterwards. Meteor
+emits no distinctive log line while doing so, so "log line + UI converges" is met by the
+UI half plus a mechanical assertion of the 286 itself — `demo-changestream.sh` now parks
+a stream, lets the pruner run out from under it, and requires the next `getMore` to
+answer `ChangeStreamHistoryLost`. That last check earns its place: the history test runs
+on every batch rather than only at open, and until now nothing proved it.

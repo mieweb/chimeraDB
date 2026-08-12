@@ -62,7 +62,9 @@ Three levels, deliberately separate. `unit/` tests the translator with no server
 `differential/` runs identical operations against ChimeraDB and against the real `mongod`
 reference and diffs the results — the reference decides what "MongoDB-compatible" means, so
 we never have to guess. `meteor/` is the acceptance bar: a stock Meteor todos app that must
-run reactively, oplog tailing and all.
+run reactively on default settings, whichever reactivity driver its release prefers —
+oplog tailing for 3.4 and earlier, change streams for 3.5 and later. Both are served from
+the same oplog table, which is the return on having put it behind triggers.
 
 ---
 
