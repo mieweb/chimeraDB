@@ -208,21 +208,21 @@ reach it. Model the tests on [test_oplog.cpp](chimera/tests/unit/test_oplog.cpp)
 
 ### Phase 3 — Drain it (`getMore`, PBRT, history-lost)
 
-- [ ] **CS3.1** In [`cmd_get_more`](chimera/plugin/chimera_mongo/commands.cc#L400): when the
+- [x] **CS3.1** In [`cmd_get_more`](chimera/plugin/chimera_mongo/commands.cc#L400): when the
   cursor's `TailState.change_stream` is set, run the `tail_batch` loop against
   `read_changestream` instead of `read_oplog`. Reuse the head-skip trick verbatim
   (advance to head when the ns filter rejected everything — rejected rows must never be
   revisited) and the same park/wake (`wait_for_oplog_write`, `kOplogPollMs`, `maxTimeMS`
   deadline). Change-stream events are **always** delivered oldest-first; there is no
   `$natural: -1` here.
-- [ ] **CS3.2** Reply shape: `nextBatch` of events, `cursor.id` unchanged,
+- [x] **CS3.2** Reply shape: `nextBatch` of events, `cursor.id` unchanged,
   `cursor.postBatchResumeToken` = token of the post-batch `after_seq`, top-level
   `operationTime`. This is what lets the driver resume correctly across quiet periods.
-- [ ] **CS3.3** History-lost: on open (CS2.3) *and* on every `getMore`, if
+- [x] **CS3.3** History-lost: on open (CS2.3) *and* on every `getMore`, if
   `after_seq + 1 < MIN(seq)` in `chimera_meta.oplog` → error
   `{ok: 0, code: 286, codeName: "ChangeStreamHistoryLost", errmsg: …}`. Meteor is built
   to recover from exactly this (drops token, resyncs). Never silently skip the gap.
-- [ ] **CS3.4** Make the 286 rule airtight against pruning: [`prune_oplog`](chimera/plugin/chimera_mongo/oplog.cc)
+- [x] **CS3.4** Make the 286 rule airtight against pruning: [`prune_oplog`](chimera/plugin/chimera_mongo/oplog.cc)
   must always leave **at least the newest row** (both the row-count and the age branch),
   so `MIN(seq)` exists whenever anything was ever written and the CS3.3 predicate is
   decidable. An empty-since-birth oplog receiving any token is also 286 (a token cannot

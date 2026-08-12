@@ -204,13 +204,23 @@ uint64_t oplog_head(SqlSession& sql) {
 uint64_t prune_oplog(SqlSession& sql, uint64_t max_rows, uint64_t max_age_seconds) {
   uint64_t removed = 0;
   if (max_age_seconds > 0) {
-    sql.exec("DELETE FROM chimera_meta.oplog WHERE ts_t < UNIX_TIMESTAMP() - " +
-             std::to_string(max_age_seconds));
+    // Never delete the newest row, however old it is. `MIN(seq)` is how a
+    // resuming change stream decides whether its token still lies inside the
+    // history we kept (see changestream-plan.md CS3.3), and an idle system whose
+    // last write has aged out would otherwise empty the table and answer
+    // "history lost" to a client that had missed nothing at all. One retained
+    // row costs nothing and keeps the question answerable.
+    sql.exec(
+        "DELETE FROM chimera_meta.oplog WHERE ts_t < UNIX_TIMESTAMP() - " +
+        std::to_string(max_age_seconds) +
+        " AND seq < (SELECT m FROM (SELECT MAX(seq) AS m FROM chimera_meta.oplog) AS newest)");
     removed += sql.affected_rows();
   }
   if (max_rows > 0) {
     // Delete by sequence rather than with LIMIT so the cut point is computed
-    // once and the delete stays a single range scan on the primary key.
+    // once and the delete stays a single range scan on the primary key. Keeping
+    // `max_rows` rows keeps the newest one for free, so this branch already
+    // satisfies the rule above.
     ResultSet rows = sql.query(
         "SELECT COALESCE(MAX(seq), 0) - " + std::to_string(max_rows) +
         " FROM chimera_meta.oplog");

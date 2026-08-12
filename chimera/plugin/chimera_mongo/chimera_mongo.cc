@@ -51,12 +51,19 @@ static MYSQL_SYSVAR_UINT(port, chimera_mongo_port_value, PLUGIN_VAR_READONLY,
 // two settable limits. 100k entries is roughly a day of a small application's
 // writes; the age limit is what actually bounds recovery for an idle system.
 // Zero switches either half off.
+//
+// Neither limit will delete the newest entry, so the oplog is never empty once
+// anything has been written. That is what keeps a change stream's "is my resume
+// token still in range?" question answerable rather than a guess; see
+// changestream-plan.md CS3.4. Both limits therefore bound how far behind a
+// consumer may fall before it is told so — not whether it is told.
 static MYSQL_SYSVAR_ULONGLONG(oplog_max_rows, chimera_mongo_oplog_max_rows_value, 0,
                               "Maximum oplog entries retained (0 disables the limit)",
                               nullptr, nullptr, 100000, 0, ~0ULL, 1);
 
 static MYSQL_SYSVAR_ULONGLONG(oplog_max_age_seconds, chimera_mongo_oplog_max_age_value, 0,
-                              "Maximum oplog entry age in seconds (0 disables the limit)",
+                              "Maximum oplog entry age in seconds (0 disables the limit; "
+                              "the newest entry is always retained)",
                               nullptr, nullptr, 86400, 0, ~0ULL, 1);
 
 // The SQL gateway lets a mongo client run SQL. Off for writes by default: a
