@@ -248,10 +248,11 @@ Scope-check against CS0.4 findings first.
   differential spec: the check is that a stream opened at the reply's `operationTime`
   begins with that very write, and the reference build will not open a stream in the
   past at all (see CS5.2), so there is nothing there to compare against.
-- [ ] **CS4.4** End-to-end fence check (deferred until Phase 6 app exists, listed here for
+- [x] **CS4.4** End-to-end fence check (deferred until Phase 6 app exists, listed here for
   scope): a Meteor method that writes and returns must not resolve on the client before
   the subscription shows the write. Meteor logs
   `change stream catching up took too long` when this plumbing is wrong — grep for it.
+  Zero occurrences across all four Phase 6 runs.
 
 ### Phase 5 — Differential + regression coverage
 
@@ -278,22 +279,22 @@ Scope-check against CS0.4 findings first.
 
 ### Phase 6 — Meteor 3.5 acceptance (the actual bar, mirrors M6)
 
-- [ ] **CS6.1** The CS0.1 Meteor 3.5.1 todos app, default settings (change streams
+- [x] **CS6.1** The CS0.1 Meteor 3.5.1 todos app, default settings (change streams
   first): starts clean, and chimera's log shows a `$changeStream` aggregate per
   observed collection and **no** tail on `local.oplog.rs`.
-- [ ] **CS6.2** Two-browser reactivity: a todo added in one appears in the other without
+- [x] **CS6.2** Two-browser reactivity: a todo added in one appears in the other without
   refresh, served by the change-stream driver (assert
   `handle._multiplexer._observeDriver._usesChangeStreams` via a server-side probe like
   [probe-meteor.sh](chimera/tests/meteor/probe-meteor.sh), or accept the log evidence
   from CS6.1).
-- [ ] **CS6.3** The party trick, again: `INSERT` via the **`mariadb` client** appears live
+- [x] **CS6.3** The party trick, again: `INSERT` via the **`mariadb` client** appears live
   in both browsers (trigger → oplog → change-stream cursor → DDP). This is the D7 story
   surviving the driver swap.
-- [ ] **CS6.4** Fence check from CS4.4 passes (no catching-up warnings under normal use).
-- [ ] **CS6.5** Regressions: the 3.3.1 app (oplog driver) and the 3.5.1 app with
+- [x] **CS6.4** Fence check from CS4.4 passes (no catching-up warnings under normal use).
+- [x] **CS6.5** Regressions: the 3.3.1 app (oplog driver) and the 3.5.1 app with
   `METEOR_REACTIVITY_ORDER=oplog,polling` still pass M6.3/M6.4 behavior — we now serve
   *both* generations of Meteor reactivity.
-- [ ] **CS6.6** Repeat CS6.1–CS6.3 on the 10.11 build.
+- [x] **CS6.6** Repeat CS6.1–CS6.3 on the 10.11 build.
 - [x] **CS6.7** Demo script `chimera/scripts/demo-changestream.sh --server <v>` in the
   house style of [demo-oplog.sh](chimera/scripts/demo-oplog.sh): shell A `watch()`es,
   shell B writes over the wire, shell C writes via `mariadb` — all events stream to A.
@@ -322,9 +323,9 @@ Scope-check against CS0.4 findings first.
 
 ## 6. Exit criteria (all must hold, both server versions)
 
-- [ ] Stock Meteor 3.5.1 todos app is reactive against chimera with **zero configuration**, on the change-stream driver.
-- [ ] A raw-SQL `INSERT` via the `mariadb` client appears live in the browser through a change stream.
-- [ ] Meteor ≤3.4 / forced-oplog behavior unchanged (full existing suite green).
+- [x] Stock Meteor 3.5.1 todos app is reactive against chimera with **zero configuration**, on the change-stream driver.
+- [x] A raw-SQL `INSERT` via the `mariadb` client appears live in the browser through a change stream.
+- [x] Meteor ≤3.4 / forced-oplog behavior unchanged (full existing suite green).
 - [ ] A pruned-away resume token produces `ChangeStreamHistoryLost` (286) and Meteor visibly recovers (log line + UI converges).
 - [x] Differential spec green against the replica-set reference; divergences fenced and documented, never silent.
 
