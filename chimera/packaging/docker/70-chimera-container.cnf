@@ -1,0 +1,9 @@
+[mariadb]
+datadir=/var/lib/mysql
+socket=/run/mysqld/mysqld.sock
+pid-file=/run/mysqld/mysqld.pid
+bind-address=0.0.0.0
+# Container-only opt-in. compose.yaml publishes to HOST loopback, never all
+# host interfaces. Other containers on the same network can reach this port.
+loose-chimera-mongo-bind=0.0.0.0
+loose-chimera-mongo-insecure-bind=ON

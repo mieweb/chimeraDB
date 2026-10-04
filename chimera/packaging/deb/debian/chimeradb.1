@@ -1,0 +1,48 @@
+.TH CHIMERADB 1 "October 2026" "ChimeraDB" "User Commands"
+.SH NAME
+chimeradb \- initialize and inspect ChimeraDB's MariaDB plugin
+.SH SYNOPSIS
+.B chimeradb
+.BR setup | status | start
+.RI [ "mariadb client options" ]
+.SH DESCRIPTION
+ChimeraDB exposes MariaDB document collections through the Mongo wire protocol
+and through SQL. The command forwards connection arguments to the mariadb client.
+.SH COMMANDS
+.TP
+.B setup
+Load the catalog and create the mongo() SQL function. Safe to repeat.
+Run this after MariaDB has loaded chimera_mongo.
+.TP
+.B status
+Report the server, plugin listener and catalog setup state.
+.TP
+.B start
+Start the MariaDB service with systemd and report status.
+.SH EXAMPLES
+.nf
+sudo systemctl restart mariadb
+sudo chimeradb setup
+chimeradb status --socket=/run/mysqld/mysqld.sock --user=root
+.fi
+.SH SECURITY
+The Mongo listener has no authentication and defaults to 127.0.0.1:27017.
+Do not make this endpoint publicly reachable.
+.SH UPGRADES AND REMOVAL
+The plugin package requires the exact MariaDB version it was built against.
+Install a rebuilt plugin together with any MariaDB server update.
+ChimeraDB maintainer scripts never connect to the database or run SQL.
+MariaDB's own package triggers may restart its service during installation
+or upgrade; use a maintenance window.
+Removal and purge preserve database data, collections, and catalog tables.
+After removal, restart MariaDB to unload the plugin from memory.
+.SH FILES
+.TP
+.I /etc/mysql/mariadb.conf.d/60-chimera.cnf
+Listener configuration.
+.TP
+.I /usr/share/chimeradb/sql/catalog.sql
+Idempotent catalog setup.
+.SH SEE ALSO
+.BR mariadb (1),
+.BR systemctl (1)

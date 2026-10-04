@@ -16,37 +16,32 @@ itself.
 
 ---
 
-## TL;DR — get started in 60 seconds
+## Installation
 
-Install:
+Release packaging is in progress. There is no published Homebrew tap, APT
+repository or release Docker image yet; bare `brew install chimeradb` and
+`apt install chimeradb` are not available installation routes.
 
-```sh
-# macOS
-brew install chimeradb
+The delivery order is Docker on an Apple Silicon Mac, Homebrew on Mac, Docker
+in an Intel Proxmox Linux VM, then a Debian 12 Intel package. Recipes and their
+current verification limits are documented here:
 
-# Debian / Ubuntu
-sudo apt install chimeradb
+| Route | Build and installation instructions |
+|---|---|
+| Docker on Mac / Intel Linux VM | [Image, Compose and persistent-volume smoke test](chimera/packaging/docker/README.md) |
+| Homebrew | [Formula generation, service and source-build validation](chimera/packaging/homebrew/README.md) |
+| Debian 12 Intel | [Local `.deb` build, install and removal checks](chimera/packaging/deb/README.md) |
 
-# Fedora / RHEL
-sudo dnf install chimeradb
+Existing source builds remain the verified development path; see
+[Building from source](#building-from-source). The
+[release plan](release-plan.md#delivery-priorities--amended-2026-10-04) distinguishes
+implemented recipes from tested and published artifacts. Fedora/RHEL and Ubuntu
+packages are outside the initial delivery scope.
 
-# Docker
-docker run -p 3306:3306 -p 27017:27017 chimeradb
-```
-
-Already run MariaDB 10.11 or 11.8? ChimeraDB is just a plugin:
-
-```sql
-INSTALL SONAME 'chimera_mongo';
-```
-
-Start it and talk to **both heads**:
-
-```sh
-chimeradb start
-mongosh mongodb://127.0.0.1:27017/appdb     # the document head
-mariadb  -h 127.0.0.1 appdb                 # the relational head
-```
+The Mongo listener has no authentication. Native installs bind it to loopback;
+the Docker Compose recipe publishes both protocols only on host loopback.
+After setup, clients use `mongosh mongodb://127.0.0.1:27017/appdb` and
+`mariadb -h127.0.0.1 -P3306 -uroot -p` (source-development ports differ).
 
 The whole idea in four statements:
 

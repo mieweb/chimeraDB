@@ -32,7 +32,11 @@ find_sql_dir() {
   die "cannot find catalog.sql (looked beside $HERE and in ../share/chimeradb/sql)"
 }
 
-sql() { mariadb "${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}" "$@"; }
+sql() {
+  local defaults=()
+  [[ -z ${CHIMERA_DEFAULTS_FILE:-} ]] || defaults=("--defaults-file=$CHIMERA_DEFAULTS_FILE")
+  mariadb "${defaults[@]+"${defaults[@]}"}" "${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}" "$@"
+}
 scalar() { sql -N -B -e "$1" 2>/dev/null || true; }
 
 cmd_setup() {
@@ -51,7 +55,7 @@ cmd_setup() {
 }
 
 cmd_status() {
-  local server plugin port bind catalog udf
+  local server plugin port bind catalog udf ready=0
   server=$(scalar 'SELECT VERSION()')
   [[ -n $server ]] || die "cannot reach the server — pass the same options you would give the mariadb client"
   printf '  server    %s\n' "$server"
@@ -59,6 +63,7 @@ cmd_status() {
   plugin=$(scalar "SELECT plugin_status FROM information_schema.plugins WHERE plugin_name = 'chimera_mongo'")
   if [[ -z $plugin ]]; then
     printf '  mongo     not loaded — add plugin_load_add=chimera_mongo to the server config\n'
+    ready=1
   else
     port=$(scalar 'SELECT @@chimera_mongo_port')
     bind=$(scalar 'SELECT @@chimera_mongo_bind')
@@ -67,6 +72,7 @@ cmd_status() {
     # is worth saying out loud every single time it is seen.
     [[ $bind == 127.* || $bind == localhost ]] ||
       printf '  WARNING   %s is not loopback and the listener authenticates nobody\n' "$bind"
+    [[ $plugin == ACTIVE ]] || ready=1
   fi
 
   catalog=$(scalar "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = 'chimera_meta'")
@@ -75,8 +81,9 @@ cmd_status() {
     printf '  setup     done\n'
   else
     printf '  setup     incomplete — run: chimeradb setup\n'
-    return 1
+    ready=1
   fi
+  return "$ready"
 }
 
 # Not a service manager. systemd already owns the server on Debian; this starts
@@ -87,7 +94,15 @@ cmd_start() {
     note "systemctl start mariadb"
     systemctl start mariadb
   elif command -v brew >/dev/null 2>&1; then
-    die "on Homebrew, start the server you installed against: brew services start mariadb@<series>, then chimeradb status"
+    [[ -n ${CHIMERA_BREW_FORMULA:-} ]] || die "use the installed Homebrew chimeradb command to start its service"
+    note "brew services start $CHIMERA_BREW_FORMULA"
+    brew services start "$CHIMERA_BREW_FORMULA"
+    # launchd returns before first-run initialization and catalog setup finish.
+    for ((attempt=0; attempt<120; attempt++)); do
+      if (cmd_status) >/dev/null 2>&1; then cmd_status; return; fi
+      sleep 1
+    done
+    die "service did not become ready; inspect brew services info $CHIMERA_BREW_FORMULA and its error log"
   else
     die "no systemd here — start MariaDB the way this machine does, then run: chimeradb status"
   fi

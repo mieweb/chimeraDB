@@ -14,9 +14,68 @@ backlog lines.
 
 ---
 
+## Delivery priorities — amended 2026-10-04
+
+Execute M9 in the owner's requested order. Milestone numbers below identify work,
+not delivery order; shared Debian package construction may happen before a Docker
+image without making native Debian the first deliverable.
+
+| Priority | Deployment | Acceptance gate |
+|---|---|---|
+| 1 | Docker on Apple Silicon Mac (`linux/arm64`) | Build image; fresh-volume initialization; SQL and Mongo clients; change streams; graceful stop; replacement container preserves data |
+| 2 | Homebrew on macOS | Source-only tap install; dedicated service; setup; both protocols; restart; MariaDB upgrade/rebuild behavior |
+| 3 | Docker in a Linux VM on Intel Proxmox (`linux/amd64`) | Same image recipe and acceptance as Mac, run on the actual VM; SSH forwarding and volume persistence |
+| 4 | Native Debian 12 on Intel (`amd64`) | Install local `.deb`s; systemd service; setup; client access; upgrade; remove/purge without losing data or preventing MariaDB startup |
+
+Both MariaDB 10.11 and 11.8 remain required. Native Debian arm64 and Ubuntu
+distribution testing are deferred; arm64 Debian packages are still an internal
+input to Docker on the Mac. Cross-table projections and the M8 feature tickets
+below remain outside this release effort. Homebrew's separate MariaDB keg is a
+runtime dependency of that installation route, not a prerequisite for building
+against the server copies already in this repository.
+
+**Current evidence (2026-10-04):**
+
+- Debian package recipes, Docker runtime/Compose/smoke scripts, Homebrew formula
+  generation/build/service/smoke scripts, and the Linux package CI workflow are
+  implemented. These are not yet published or certified release artifacts.
+- Native plugin builds succeeded against 10.11.18 and 11.8.8, including fresh
+  Homebrew-style staged builds using the existing repository servers. Both generated
+  formulae evaluate under Homebrew's Ruby DSL. The supported Homebrew MariaDB
+  dependencies have now been installed with the owner's approval.
+- Change-stream review fixes R1–R3 and cold-start history loss are implemented;
+  88 server-independent tests, live regression and all nine differential specs pass
+  on both native server versions.
+- Eight server-free CLI checks pass, including failed readiness when the plugin
+  is missing/inactive and Homebrew defaults-file forwarding. Docker Compose parses
+  successfully; these checks do not establish runtime image acceptance.
+- OrbStack is running. Both ARM package builds, install/reinstall/remove/purge
+  lifecycle tests, and full Docker runtime/persistence tests pass (MariaDB
+  10.11.18 and 11.8.9). Intel builds are progressing separately.
+- Local `brew install` reached the toolchain prerequisite check and refused the
+  host's stale Command Line Tools (26.3) on macOS 27. Full Xcode 27 is selected,
+  but Apple's updater currently offers no CLT update. Native staged validation
+  and clean-runner Homebrew CI are separate from this host-toolchain blocker.
+- No Proxmox VM has been selected or accessed. Native amd64/VM acceptance is pending.
+- Nothing has been published, and the package workflow has not run in GitHub Actions.
+
+**Network acceptance:** native packages bind the Mongo listener to loopback. The
+Docker image explicitly opts into binding within its container, while the supplied
+Compose file publishes only to host loopback. Verify both boundaries. Containers on
+the same bridge remain able to reach the unauthenticated Mongo endpoint; use a private
+network. This replaces the blanket container-loopback wording in the original plan.
+
+Implementation entry points: [Docker](chimera/packaging/docker/README.md),
+[Homebrew](chimera/packaging/homebrew/README.md),
+[Debian](chimera/packaging/deb/README.md). Unchecked boxes below remain unchecked
+until their verification gates pass.
+
+---
+
 ## Why this milestone exists
 
-[README § TL;DR](README.md#tldr--get-started-in-60-seconds) already tells a stranger to run:
+The original README told a stranger to run (these promises are now removed from
+[README § Installation](README.md#installation) until verified):
 
 ```sh
 brew install chimeradb          # macOS
@@ -26,7 +85,7 @@ docker run -p 3306:3306 -p 27017:27017 chimeradb
 chimeradb start
 ```
 
-None of that exists. Every one of those lines is a promise the project has already made in
+At the original plan baseline none of that existed. Every one of those lines was a promise the project had already made in
 public, and the same README says ChimeraDB "never lies to a driver about features" — the
 same standard should apply to its own front page. M9 either makes each line true or removes
 it. **Scope decision below: brew and apt (+ Docker, nearly free) get built; `dnf` gets cut
@@ -229,9 +288,10 @@ patches) is honored. A package build has no server tree.
   > time, since the listener still authenticates nobody ([#5](https://github.com/mieweb/chimeraDB/issues/5)).
   > The README edit rides with the exit-criteria item below, which already owns making every
   > printed command true.
-- [ ] **M9.2.6** Target matrix, and the honest reason for each: Debian 12 (bookworm, native
-  10.11), Ubuntu 24.04 (native 10.11), and MariaDB.org's 11.8 repo on both. Anything not in
-  the matrix is not claimed.
+- [ ] **M9.2.6** Initial target: Debian 12 (bookworm, native 10.11), plus MariaDB.org's
+  11.8 repository on bookworm. Native deployment is Intel; arm64 packages support the
+  Mac Docker image. Ubuntu and native Debian arm64 are deferred. Anything not tested
+  in this matrix is not claimed.
 - [ ] **M9.2.7** Dependencies: `mariadb-server` pinned to the matching series, plus libbson —
   which is `libbson-1.0-0` on bookworm but `bson2` upstream, exactly the split the
   [translator CMakeLists](chimera/translator/CMakeLists.txt#L12-L16) already handles. Verify
@@ -267,11 +327,12 @@ patches) is honored. A package build has no server tree.
 
 ---
 
-## M9.4 — Docker image *(nearly free once M9.2 exists)*
+## M9.4 — Docker image *(first delivery; reuses M9.2 package construction)*
 
-- [ ] **M9.4.1** `FROM mariadb:11.8` + install the `.deb` + the config drop-in + entrypoint
-  that runs `chimeradb setup` on first boot against its own server. Multi-arch manifest via
-  the same buildx invocation as M9.2.
+- [ ] **M9.4.1** Debian 12 runtime base + matching MariaDB and ChimeraDB `.deb`s +
+  container config + entrypoint that runs `chimeradb setup` on an empty volume.
+  Use the same package sources as M9.2 so a base image cannot introduce a different
+  distro ABI. Test each architecture separately before publishing a multi-arch manifest.
 - [ ] **M9.4.2** Publish as `mieweb/chimeradb`, and fix the README's bare `chimeradb` image
   name to match.
 - [ ] **M9.4.3** The image doubles as the package smoke test's happy path — it is the
@@ -291,7 +352,9 @@ where the bugs live.
   row via SQL, watch it arrive in the oplog, open a `$changeStream` and see a raw-SQL
   `INSERT` arrive as an event, call `mongo('db.c.findOne({})')` from the SQL prompt. That
   subset covers M4, M5 (both reactivity paths) and M7 through the packaged artifact only.
-- [ ] **M9.5.2** Matrix: {bookworm, ubuntu 24.04} × {10.11, 11.8} × {amd64, arm64}.
+- [ ] **M9.5.2** Initial matrix: Debian 12 packages/images × {10.11, 11.8} ×
+  {amd64, arm64}; Mac Docker, Mac Homebrew and Intel Proxmox VM acceptance as above.
+  Native Debian deployment targets amd64; Ubuntu and native Debian arm64 are deferred.
 - [ ] **M9.5.3** **Upgrade and purge are release-blocking tests.** A leftover
   `plugin_load_add=chimera_mongo` in a conf.d file after the `.so` is gone means `mariadbd`
   refuses to start — the package would break the user's database by being removed. Test
@@ -352,11 +415,13 @@ Packaging without CI means release artifacts built by hand on one Mac.
 
 - [ ] On a clean Debian container (both arches) and a clean Mac: install, `setup`, and run
   the README's party trick with no source tree present.
-- [ ] Every install command printed in [README.md](README.md#tldr--get-started-in-60-seconds)
+- [ ] Every install command printed in [README.md](README.md#installation)
   either works verbatim or has been removed. `dnf` is removed unless someone builds it.
 - [ ] Artifacts are produced by CI from a tag, not by a human.
-- [ ] The Mongo listener is loopback-bound in every shipped default until authentication
-  exists ([#5](https://github.com/mieweb/chimeraDB/issues/5)).
+- [ ] Native Mongo listeners and Docker host port publications are loopback-bound in
+  every shipped default until authentication exists
+  ([#5](https://github.com/mieweb/chimeraDB/issues/5)); container binds are the explicit
+  exception described in the delivery priorities above.
 
 ---
 

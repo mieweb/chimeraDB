@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+  cat <<'EOF'
+ChimeraDB installed. Restart MariaDB when convenient, then initialize:
+  sudo systemctl restart mariadb
+  sudo chimeradb setup
+  sudo chimeradb status
+The Mongo listener is unauthenticated and restricted to 127.0.0.1:27017.
+No database or service was changed by the ChimeraDB maintainer scripts.
+MariaDB's own package triggers may restart its service during this operation.
+EOF
+fi
+#DEBHELPER#

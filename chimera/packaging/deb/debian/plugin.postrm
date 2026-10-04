@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+case "$1" in
+  remove|purge)
+    cat <<'EOF'
+ChimeraDB package removed. Database data and catalog remain untouched.
+Restart MariaDB when convenient to unload the running plugin.
+EOF
+    ;;
+esac
+#DEBHELPER#
