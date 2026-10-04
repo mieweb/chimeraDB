@@ -5,6 +5,8 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 [[ $# == 2 && $1 == --image ]] || { echo 'usage: test.sh --image IMAGE' >&2; exit 1; }
 image=$2
 docker info >/dev/null 2>&1 || { echo 'Docker is not running' >&2; exit 1; }
+architecture=$(docker image inspect --format '{{.Architecture}}' "$image")
+[[ $architecture == arm64 || $architecture == amd64 ]] || { echo 'Unsupported image architecture' >&2; exit 1; }
 name="chimera-release-$(date +%s)-$$"
 volume="$name-data"
 network="$name-net"
@@ -20,7 +22,7 @@ docker build -f "$HERE/smoke.Dockerfile" -t "$runner" "$HERE"
 docker network create "$network" >/dev/null
 docker volume create "$volume" >/dev/null
 start() {
-  docker run -d --name "$name" --network "$network" --network-alias db \
+  docker run -d --platform "linux/$architecture" --name "$name" --network "$network" --network-alias db \
     -e MARIADB_ROOT_PASSWORD -v "$volume:/var/lib/mysql" \
     -p 127.0.0.1::3306 -p 127.0.0.1::27017 "$image" >/dev/null
   for ((attempt=0; attempt<180; attempt++)); do

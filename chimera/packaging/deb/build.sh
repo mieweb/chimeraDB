@@ -37,12 +37,29 @@ architectures=($arch)
 [[ $arch != both ]] || architectures=(arm64 amd64)
 for architecture in "${architectures[@]}"; do
   destination="$output/$series/$architecture"
-  mkdir -p "$destination"
+  # BuildKit's local exporter merges into its destination. Export to an empty
+  # directory so a new package revision cannot mix with old .debs that the
+  # install commands would pick up with their wildcard.
+  staging=$(mktemp -d "${TMPDIR:-/tmp}/chimera-packages.XXXXXX")
+  trap '[[ -z ${staging:-} ]] || rm -rf "$staging"' EXIT
   docker buildx build --platform "linux/$architecture" \
     --file "$HERE/Dockerfile" --target packages \
     --build-arg "SERIES=$series" --build-arg "MARIADB_VERSION=$version" \
     --build-arg "REVISION=$revision" --build-arg "JOBS=$jobs" \
     --build-arg "SOURCE_DATE_EPOCH=$epoch" \
-    --output "type=local,dest=$destination" "$ROOT"
+    --output "type=local,dest=$staging" "$ROOT"
+  [[ -f $staging/SHA256SUMS && -f $staging/build-info.txt ]] || die 'package export is incomplete'
+  packages=("$staging"/chimeradb*.deb)
+  [[ -f ${packages[0]} ]] || die 'package export contains no ChimeraDB packages'
+  # Preserve the last successful build if Docker fails. Only replace our own
+  # generated package files after the new export is complete; leave unrelated
+  # files in a user-selected output directory alone.
+  mkdir -p "$destination"
+  for previous in "$destination"/chimeradb*.deb; do
+    [[ ! -f $previous ]] || rm -f -- "$previous"
+  done
+  cp -p "${packages[@]}" "$staging/SHA256SUMS" "$staging/build-info.txt" "$destination/"
+  rm -rf "$staging"
+  staging=
   printf 'Packages: %s\n' "$destination"
 done

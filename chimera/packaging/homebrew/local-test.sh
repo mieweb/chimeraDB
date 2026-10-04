@@ -67,5 +67,7 @@ else
   # Both series can remain installed while existing PATH links stay untouched.
   brew install --build-from-source --skip-link "$tap/$formula"
 fi
-brew test "$tap/$formula"
+# Homebrew explicitly supports testing unlinked formulae with --force; retain
+# --skip-link above so this check never replaces an existing chimeradb command.
+brew test --force "$tap/$formula"
 printf 'Installed and tested %s from a local source snapshot. No global service was started.\n' "$tap/$formula"

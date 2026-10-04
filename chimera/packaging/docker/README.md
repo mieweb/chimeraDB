@@ -54,6 +54,18 @@ tested target. Run the same build/test commands inside that VM with `--arch amd6
 and `CHIMERA_IMAGE="chimeradb:$(cat chimera/VERSION)-10.11-amd64"`. Native amd64
 validation in this VM is required; emulation on a Mac alone does not complete it.
 
+To move an already built Intel image from the Mac without rebuilding on the VM:
+
+```sh
+./chimera/packaging/docker/export.sh --server 10.11 --arch amd64
+```
+
+Copy the resulting `.tar.gz` and `.sha256` from `chimera/packaging/dist/images/`
+to the VM. Verify with `sha256sum -c <image>.tar.gz.sha256`, then
+`docker load -i <image>.tar.gz`. Use that image tag with the same Compose file.
+These archives contain the image only; they do not contain any database volume
+or the local runtime password.
+
 Compose publishes SQL and Mongo on the VM's loopback. Reach them from a Mac
 using SSH forwarding, substituting the real VM host:
 
