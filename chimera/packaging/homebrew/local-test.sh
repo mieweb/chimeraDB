@@ -61,6 +61,12 @@ print(f"Source snapshot: {destination}")
 PY
 python3 "$HERE/render-formula.py" --url "$(cat "$work/source.url")" \
   --sha256 "$(cat "$work/source.sha256")" --output "$tap_repo/Formula"
+# Reinstall evaluates conflicts_with and loads the sibling formula too. Trust
+# only the two formulae just generated here, rather than the entire tap or all
+# third-party code. Older Homebrew versions predate this trust command.
+if brew command trust >/dev/null 2>&1; then
+  brew trust --formula "$tap/chimeradb" "$tap/chimeradb@10.11"
+fi
 if $reinstall; then
   brew reinstall --build-from-source "$tap/$formula"
 else

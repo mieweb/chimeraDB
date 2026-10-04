@@ -16,12 +16,14 @@ namespace {
 std::deque<std::variant<chimera::ResultSet, chimera::TranslatorError>> results;
 unsigned query_count = 0;
 unsigned schema_installs = 0;
+const chimera::SqlSession* schema_install_session = nullptr;
 std::optional<chimera::TranslatorError> install_error;
 
 void return_rows(std::vector<chimera::Row> rows) {
   results.clear();
   query_count = 0;
   schema_installs = 0;
+  schema_install_session = nullptr;
   install_error.reset();
   chimera::ResultSet result;
   result.rows = std::move(rows);
@@ -47,8 +49,9 @@ std::string SqlSession::render(std::string_view sql, const std::vector<Param>&) 
 }
 std::string Namespace::text() const { return db + "." + collection; }
 uint64_t oplog_head(SqlSession&) { return 0; }
-void install_oplog_schema(SqlSession&) {
+void install_oplog_schema(SqlSession& sql) {
   ++schema_installs;
+  schema_install_session = &sql;
   if (install_error) throw *install_error;
 }
 }  // namespace chimera
@@ -123,6 +126,8 @@ TEST_CASE("the first operation-time read bootstraps a missing clock and retries"
   CHECK(now.i == 0);
   CHECK(query_count == 2);
   CHECK(schema_installs == 1);
+  CHECK(schema_install_session != nullptr);
+  CHECK(schema_install_session != &sql);
   CHECK(results.empty());
 }
 

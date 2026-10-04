@@ -42,9 +42,9 @@ struct OperationTime {
 };
 OperationTime current_operation_time(SqlSession& sql);
 
-// Reads the clock, creating the oplog schema only if it is missing. Call only
-// outside write transactions: schema DDL can implicitly commit a transaction.
-// Transactional write fences must use the strict current_operation_time above.
+// Reads the clock, creating a missing oplog schema through a separate session
+// so its DDL cannot commit a caller's explicit SQL-gateway transaction.
+// Transactional write fences still use the strict current_operation_time above.
 OperationTime current_operation_time_or_initialize(SqlSession& sql);
 
 }  // namespace chimera

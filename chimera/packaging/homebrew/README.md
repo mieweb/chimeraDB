@@ -86,7 +86,8 @@ chimera/packaging/homebrew/local-test.sh --server 10.11
 ```
 
 This creates the private local tap `chimera-local/release-validation`, generates
-formulae with a checksum of the current sources, installs each formula without
+formulae with a checksum of the current sources, trusts those two generated
+formulae when Homebrew requires it, installs each formula without
 changing command links, and runs `brew test` with isolated state. It does not
 publish a tap or start a global service. Add `--reinstall` after source changes
 to rebuild an already installed test formula.

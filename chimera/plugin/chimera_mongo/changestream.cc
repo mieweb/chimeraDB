@@ -122,7 +122,11 @@ OperationTime current_operation_time_or_initialize(SqlSession& sql) {
     // error justifies bootstrapping; permission/storage failures stay visible.
     if (error.code() != 26) throw;
   }
-  install_oplog_schema(sql);
+  // A caller can have an explicit transaction open through chimeraSql even
+  // between Mongo commands. DDL must use its own session so first-ping setup
+  // cannot implicitly commit that caller's work.
+  SqlSession initializer;
+  install_oplog_schema(initializer);
   // A failed install or retry propagates. Do not manufacture a zero timestamp
   // or loop indefinitely when the underlying schema cannot be made usable.
   return current_operation_time(sql);
