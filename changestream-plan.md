@@ -9,10 +9,25 @@
 The release pass checks retention after every stream read, including reads after
 parking and cursors opened on an empty oplog. NULL event rendering now fails
 explicitly, and database-wide watches return the documented unsupported error.
-The full native suite passes on both server series: 88 unit cases, the parked-prune
+The full native suite passes on both server series at code commit `5f78542`:
+**93 unit cases**, the parked-prune
 regression in [test-changestream-regressions.sh](chimera/scripts/test-changestream-regressions.sh),
-SQL/wire demos and all nine MongoDB differential specs. The sections below retain
-the original implementation rationale and completed milestone checklist.
+SQL/wire demos and **all nine MongoDB differential specs**. Local evidence is in
+`chimera/.run/release/native-10.11-isolated-clock.log` and
+`native-11.8-isolated-clock.log`.
+
+Clean installation testing also exposed a first-ping failure before any document
+write: `chimera_meta.oplog_clock` did not yet exist. The helper now bootstraps missing
+metadata in a **separate `SqlSession`** and retries the clock read in the caller's
+session. Initialization DDL therefore cannot implicitly commit a SQL gateway
+transaction. Deterministic tests verify the separate session, the existing-clock
+path, propagated initialization/read errors and the no-DDL transactional helper.
+Fresh ping is checked before writes in packaging acceptance. Both staged Homebrew
+starts and clean CI Homebrew source installs/lifecycle tests pass, as do all four
+native Linux package/Docker combinations (10.11/11.8 × arm64/amd64) in the
+[final package CI run](https://github.com/mieweb/chimeraDB/actions/runs/37214386998).
+See [release-plan.md](release-plan.md) for distribution gates still open. The
+sections below retain the original implementation rationale and completed checklist.
 
 ## 1. Why this exists (read this first)
 
@@ -245,7 +260,10 @@ Scope-check against CS0.4 findings first.
 
 - [x] **CS4.1** Helper in the plugin: current `(ts_t, ts_i)` read from
   `chimera_meta.oplog_clock` (one indexed-PK row; inside the caller's session). Used as
-  `operationTime` in replies.
+  `operationTime` in replies. The first-read helper bootstraps a missing clock in a
+  separate session before retrying, preserving any caller transaction. Ordinary
+  transactional clock reads never run schema DDL; unrelated SQL errors and failed
+  initialization/retries propagate. These paths have deterministic unit coverage.
 - [x] **CS4.2** `ping` reply gains `operationTime` — Meteor uses it twice (start-time pin
   §2.2, caught-up floor §2.5-adjacent). Cheap, unconditional.
 - [x] **CS4.3** Write replies (`insert`, `update`, `delete`, `findAndModify` if/where it
@@ -283,7 +301,8 @@ Scope-check against CS0.4 findings first.
   therefore opens its streams before the writes they observe, and replay is asserted
   against chimera directly in demo-changestream.sh.
 - [x] **CS5.3** Unit + differential + existing suites green on both versions
-  (`chimera/scripts/test.sh --server 10.11` and `--server 11.8`), 8/8 + new spec.
+  (`chimera/scripts/test.sh --server 10.11` and `--server 11.8`), all nine differential
+  specs including change streams; the release hardening run also passes 93 unit cases.
 
 ### Phase 6 — Meteor 3.5 acceptance (the actual bar, mirrors M6)
 

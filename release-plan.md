@@ -38,14 +38,17 @@ against the server copies already in this repository.
 
 - Debian package recipes, Docker runtime/Compose/smoke scripts, Homebrew formula
   generation/build/service/smoke scripts, and the Linux package CI workflow are
-  implemented. These are not yet published or certified release artifacts.
-- The full native development test suite passes against MariaDB 10.11.18 and
-  11.8.8. Homebrew staging builds and runtime smoke tests also pass for both series
-  against the installed versioned Homebrew kegs, including a real Mongo C driver,
-  SQL visibility, loopback, the gateway, oplog and restart persistence.
-- Change-stream review fixes R1–R3 and cold-start history loss are implemented;
-  88 server-independent tests, live regression and all nine differential specs pass
-  on both native server versions.
+  implemented and verified as described below. Public release publication remains open.
+- At code commit `5f78542`, the full native development suite passes against
+  MariaDB 10.11.18 and 11.8.8: **93 unit cases, live regressions, SQL/wire demos
+  and all nine MongoDB differential specs** on each. Local evidence is in
+  `chimera/.run/release/native-10.11-isolated-clock.log` and
+  `native-11.8-isolated-clock.log`. Fresh-start Homebrew staging also passes
+  against both installed versioned kegs.
+- Change-stream review fixes R1–R3, cold-start history loss and first-ping clock
+  initialization are verified. A missing clock is bootstrapped in a separate
+  `SqlSession`, so initialization DDL cannot commit a caller's SQL gateway
+  transaction. Deterministic tests cover session identity and propagated errors.
 - Eight server-free CLI checks pass, including failed readiness when the plugin
   is missing/inactive and Homebrew defaults-file forwarding.
 - **All four Debian package and Docker combinations pass locally:** MariaDB
@@ -54,31 +57,35 @@ against the server copies already in this repository.
   data preservation. Runtime tests cover wire CRUD, SQL visibility, SQL-to-change
   streams, oplog, `mongo()`, gateway isolation, host-loopback publication and data
   surviving replacement of the container. These ran through OrbStack on the Mac;
-  the local `amd64` executions used emulation. The first two GitHub Actions runs
-  also passed all four Linux package/runtime combinations on native architecture
-  runners. These passes precede the latest fresh-installation readiness fix;
-  its complete rerun is pending.
-- Clean GitHub Actions macOS runners now pass both source formula installation
-  and `brew test --force` for both series. The subsequent launchd lifecycle test
-  exposed a first-ping failure before any document write: `oplog_clock` did not
-  yet exist. The failure was reproduced locally on both series. A focused core
-  fix now passes fresh-ping staging on both; deterministic helper regressions are
-  being added, and the full post-fix matrix remains pending.
-- The Homebrew service now checks the full recorded keg identity, including
-  package revision. A negative test confirms that a changed revision is rejected
-  before data initialization. Complete CI lifecycle/upgrade validation is pending.
-- The Debian upgrade script and CI steps now cover a concrete `0.1.0-1` →
-  `0.1.0-2` package upgrade, but that new path has not executed yet. Earlier
-  reinstall coverage is not being counted as a version upgrade.
+  the local `amd64` executions used emulation. The final
+  [package CI run](https://github.com/mieweb/chimeraDB/actions/runs/37214386998)
+  at `5f78542` passes all four combinations on native architecture runners,
+  including the first-ping fix and package revision upgrades.
+- Both Homebrew formulae pass source installation, `brew test --force`, fresh
+  ping before any writes, dedicated launchd service operation, real Mongo/SQL
+  drivers, reinstall, custom config and data persistence on clean macOS CI
+  runners. The full recorded MariaDB keg identity includes package revision;
+  the negative test rejects a changed revision before data initialization.
+- Concrete **`0.1.0-1` → `0.1.0-2` Debian package revision upgrades pass** for
+  both series and architectures in native CI and for both Intel packages locally
+  under emulation. Tests assert the increased installed version, active plugin,
+  custom config/data preservation, reinstall, removal and purge. This is a
+  packaging revision upgrade within ChimeraDB 0.1.0, not a MariaDB server migration.
 - Local `brew install` reached the toolchain prerequisite check and refused the
   host's stale Command Line Tools (26.3) on macOS 27. Full Xcode 27 is selected,
   but Apple's updater currently offers no CLT update. Native staged validation
   and clean-runner Homebrew CI are separate from this host-toolchain blocker.
 - No Proxmox VM or native Debian Intel system has been selected or accessed.
   Actual VM deployment and Debian systemd acceptance remain pending.
-- The package workflow has run in GitHub Actions, but the final corrected matrix
-  is not yet certified green. No public release assets, container manifests or
-  Homebrew tap have been published.
+- The final package CI run succeeded with all eight jobs passing; the
+  separate [test workflow](https://github.com/mieweb/chimeraDB/actions/runs/37214387046)
+  succeeded at the same code commit. All four CI package sets have been imported
+  with verified checksums. All four local images rebuilt from those packages pass
+  runtime acceptance again; both Intel image archives and the source archive have
+  verified checksums. Artifacts are in `chimera/packaging/dist/`. The refreshed Mac
+  preview is healthy on SQL `127.0.0.1:13306` and Mongo `127.0.0.1:37017`, with its
+  persistent volume retained.
+  No public release assets, container manifests or Homebrew tap have been published.
 
 **Network acceptance:** native packages bind the Mongo listener to loopback. The
 Docker image explicitly opts into binding within its container, while the supplied
@@ -184,10 +191,10 @@ At the original baseline, three concrete things were macOS-only:
   `demo-projection` — every D3, D8 and D10 assertion, identical to macOS.
 
 - [ ] **M9.0.4** Run the complete development `test.sh` pyramid for both server series
-  on arm64 **and** amd64. All 88 server-independent tests and the packaged plugin,
+  on arm64 **and** amd64. All 93 server-independent tests and the packaged plugin,
   SQL/Mongo, change-stream and persistence paths now pass in the Linux package
-  matrix. The Linux reference-dependent demos/differential suite have not yet run;
-  local amd64 package/runtime validation used emulation.
+  matrix on native CI runners. The Linux reference-dependent demos/differential
+  suite have not yet run; local amd64 package/runtime validation used emulation.
 
 **Exit criteria:** `test.sh` green for 10.11 and 11.8 inside a Debian container, on both
 architectures, with no source changes made outside `chimera/`.
@@ -349,16 +356,16 @@ availability and full-server-build cost assumptions.
   configures that server source and builds only the plugin target. Staging passes
   against both installed supported kegs, and both source formula installs succeeded
   on clean GitHub Actions macOS runners.
-- [ ] **M9.3.3** Complete clean-runner service and lifecycle acceptance. The module,
+- [x] **M9.3.3** Complete clean-runner service and lifecycle acceptance. The module,
   CLI and SQL install into ChimeraDB's own keg; generated `etc/<formula>.cnf`,
   `var/<formula>` data and a dedicated launchd service avoid modifying another keg
-  or global `my.cnf`. Clean CI installation and `brew test --force` pass on both
-  series, but launchd acceptance exposed a missing `oplog_clock` on the first
-  Mongo ping before any writes. The focused fix passes fresh local staging on both;
-  the full launchd/reinstall/config-and-data persistence rerun remains pending.
-  A keg-identity guard and negative revision-change test now reject a changed
-  server keg before initialization. Complete its CI coverage and a real server
-  upgrade/rebuild test before marking upgrade acceptance complete.
+  or global `my.cnf`. Both series pass clean CI source installation,
+  `brew test --force`, first Mongo ping before writes, launchd start/stop/restart,
+  real Mongo/SQL drivers, reinstall and custom config/data persistence. The
+  first-ping clock initialization fix also passes fresh local staging on both.
+  The keg-identity guard's negative revision-change test passes in CI: a changed
+  MariaDB keg is refused before data initialization and requires a plugin rebuild.
+  This verifies mismatch protection, not migration to a different MariaDB server.
 - [x] **M9.3.4** Source-only formula installation is implemented and has succeeded
   for both series on clean CI runners. No bottles are published or required.
 - [ ] **M9.3.5** Add tag-driven tap updates. The canonical template and renderer
@@ -368,10 +375,10 @@ availability and full-server-build cost assumptions.
 
 > **Host limitation and CI distinction:** this Mac's stale CLT 26.3 on macOS 27
 > prevents a normal Homebrew formula build despite full Xcode 27 being selected.
-> Staging against the installed versioned kegs passes. Clean CI source installation
-> and formula tests now pass after correcting the unlinked-formula invocation.
-> Launchd then found the separate first-ping initialization bug described above;
-> its full lifecycle rerun remains open despite the focused local fix passing.
+> Staging against the installed versioned kegs passes. Clean CI source installation,
+> formula tests and the complete service/lifecycle rerun now pass on both series,
+> including the first-ping initialization fix. This host's toolchain limitation
+> remains separate from the verified clean-runner installation path.
 
 ---
 
@@ -381,8 +388,8 @@ availability and full-server-build cost assumptions.
   uses Debian 12 with the matching MariaDB and ChimeraDB packages. Its entrypoint
   initializes an empty persistent volume and runs setup; the container config
   explicitly enables its non-loopback listener. Images build and pass runtime
-  acceptance for both series and architectures through OrbStack and in the first
-  two native Linux CI runs. The latest fresh-ping fix still needs its matrix rerun.
+  acceptance for both series and architectures through OrbStack. The final native
+  Linux CI matrix also passes all four combinations with the fresh-ping fix.
   Multi-architecture manifest publication is a separate, uncompleted gate.
 - [ ] **M9.4.2** Publish the verified images and multi-architecture manifest under
   `mieweb/chimeradb`, then advertise that registry reference. Current artifacts are
@@ -405,28 +412,29 @@ Package lifecycle and runtime-driver acceptance therefore have separate scripts.
   wire CRUD, SQL visibility, oplog, a raw-SQL write arriving through a change stream,
   `mongo()` and restart/replacement persistence. These tests use the packaged artifact
   without the development source tree or Linux reference `mongo` shell.
-- [ ] **M9.5.2** Complete deployment acceptance beyond the local container matrix:
-  clean Homebrew formula tests plus launchd/lifecycle checks, an actual Intel Proxmox
-  Linux VM, and native Debian 12 Intel/systemd. The Debian package/image matrix
-  {10.11, 11.8} × {amd64, arm64} passes locally and in two native Linux CI runs;
-  local amd64 used emulation. The latest readiness fix requires a fresh full rerun.
-  Ubuntu and native Debian arm64 are deferred.
-- [ ] **M9.5.3** **Version upgrade remains a release gate.** Install → reinstall →
-  remove → purge → MariaDB still starts and preserves data passes for all four
-  combinations. A reinstall exercises conffile handling but is not a version upgrade.
+- [ ] **M9.5.2** Complete deployment acceptance on an actual Intel Proxmox Linux
+  VM and native Debian 12 Intel/systemd. Clean Homebrew formula tests and
+  launchd/lifecycle acceptance pass for both series. The Debian package/image
+  matrix {10.11, 11.8} × {amd64, arm64} passes locally and in the final native
+  Linux CI run, including the readiness fix; local amd64 used emulation.
+  Actual Proxmox/systemd access is still pending. Ubuntu and native Debian arm64
+  are deferred.
+- [x] **M9.5.3** **Package revision upgrade acceptance.** Install → upgrade →
+  reinstall → remove → purge → MariaDB still starts and preserves data passes
+  for all four combinations on native Linux CI runners. Both Intel package
+  upgrades also pass locally under emulation.
   [deb/test.sh](chimera/packaging/deb/test.sh) now accepts `--previous-packages DIR`
   to install the older set, initialize/write/customize, upgrade to the newer set,
   assert a strictly increased installed package version plus active plugin and
   retained config/data, then run reinstall/removal/purge. Both inputs must match
-  series and architecture. CI now includes the concrete `0.1.0-1` → `0.1.0-2`
-  build/test steps, but actual upgrade execution is still pending;
-  retain its distinction from cross-ChimeraDB-version data migration and MariaDB
-  upgrade/rebuild acceptance.
+  series and architecture. The verified upgrade is **`0.1.0-1` → `0.1.0-2`**:
+  a packaging revision change within the first ChimeraDB version, 0.1.0. It does
+  not claim migration across ChimeraDB versions or MariaDB server versions.
   Retained config after removal uses `loose-` plugin options; the missing module logs
   an error but does not prevent MariaDB startup, as verified in the lifecycle tests.
 - [x] **M9.5.4** Runtime assertions confirm native-package Mongo loopback defaults
   in all four package tests and host-loopback publication in all four Docker tests.
-  Homebrew staging also asserts loopback on both series. The image deliberately
+  Homebrew staging and clean CI also assert loopback on both series. The image deliberately
   binds inside its container; containers sharing its bridge are within the trust boundary.
 
 ---
@@ -436,20 +444,22 @@ Package lifecycle and runtime-driver acceptance therefore have separate scripts.
 [.github/workflows/test.yml](.github/workflows/test.yml) covers server-independent
 hygiene and translator/storage tests. [package.yml](.github/workflows/package.yml)
 builds and tests the Linux artifact matrix and installs/tests both Homebrew formulae.
-Initial GitHub Actions runs have occurred; their results must not be confused with
-completion of the corrected workflow or tag-driven publication.
+At code commit `5f78542`, all eight jobs in
+[package run 37214386998](https://github.com/mieweb/chimeraDB/actions/runs/37214386998)
+passed and the run succeeded; the separate
+[test run 37214387046](https://github.com/mieweb/chimeraDB/actions/runs/37214387046)
+succeeded. Tag-driven publication remains a separate gate.
 
 - [ ] **M9.6.1** Extend `test.yml` to the full M0–M7 development pyramid for both
   series on Linux. The existing native amd64/arm64 hygiene and unit jobs do not
   replace the reference-dependent layers blocked by M9.0's Correction 4.
-- [ ] **M9.6.2** Obtain a green corrected `package.yml` matrix: Debian builds,
+- [x] **M9.6.2** Obtain a green corrected `package.yml` test matrix: Debian builds,
   lifecycle tests and runtime-driver acceptance on native Linux runners, plus clean
   Homebrew install, formula tests and service/lifecycle acceptance for both series.
-  The first two native Linux CI matrices pass all four package/runtime jobs, and
-  clean CI Homebrew installation plus formula tests pass on both series. Launchd
-  exposed the first-ping clock-initialization bug; focused local fixes pass, but
-  their full matrix, launchd lifecycle, keg-identity guard and package-version
-  upgrade coverage remain pending.
+  The final run above passes all four Linux combinations, including package
+  revision upgrade, remove/purge and Docker wire/stream/persistence checks.
+  Both Homebrew source installs, formula tests, fresh ping, launchd lifecycle,
+  stale-keg rejection, real drivers and reinstall/config/data persistence pass.
 - [ ] **M9.6.3** Implement `release.yml`: on tag, publish `.deb`s and corresponding
   source to GitHub Releases, push the Docker manifest, and update the public tap.
   None of these public release steps has run. Plain downloadable packages come
@@ -457,7 +467,7 @@ completion of the corrected workflow or tag-driven publication.
 - [x] **M9.6.4** Use native CI runners and thin script wrappers. Both Linux workflows
   select `ubuntu-24.04-arm` for arm64 and `ubuntu-24.04` for amd64;
   `package.yml` uses `macos-15` for Homebrew. Scripts are the shared local/CI entry
-  points. This configuration is complete; whole-workflow acceptance remains M9.6.2.
+  points. The complete test matrix has passed under M9.6.2.
 - [x] **M9.6.5** [check-hygiene.sh](chimera/scripts/check-hygiene.sh) is wired into
   `test.yml` to enforce the SSPL source boundary.
 
@@ -477,8 +487,8 @@ completion of the corrected workflow or tag-driven publication.
   > driver gating on it still gets a true answer; the suffix is valid semver prerelease, so
   > version parsers accept it and it sorts *below* 6.0.0 rather than above — the safe
   > direction to be wrong in. `gitVersion` follows as `chimera-<VERSION>`. Verified against
-  > both shells: `mongosh` prints `Using MongoDB: 6.0.0-chimera-0.1.0`, and the differential
-  > suite is unchanged at 8/8.
+  > both shells: `mongosh` prints `Using MongoDB: 6.0.0-chimera-0.1.0`. The current
+  > differential suite passes all nine specs on both server series.
 - [x] **M9.7.3** Encode product and server identity without conflating them:
   `chimeradb-plugin-11.8_0.1.0-1_amd64.deb` carries series in its package name,
   product version/revision in its version, and an exact MariaDB package dependency.
@@ -489,15 +499,18 @@ completion of the corrected workflow or tag-driven publication.
 
 ## M9 exit criteria
 
-- [ ] On a clean Debian container (both arches) and a clean Mac: install, `setup`, and run
-  the README's party trick with no source tree present.
+- [x] On clean Debian containers (both arches) and clean macOS CI runners: install,
+  `setup`, and run the SQL/Mongo party trick using installed artifacts without a
+  development source tree at runtime. Both server series pass; Homebrew also passes
+  its dedicated launchd lifecycle. Actual Proxmox/native Debian systemd remains M9.5.2.
 - [ ] Every install command printed in [README.md](README.md#installation)
   either works verbatim or has been removed. `dnf` is removed unless someone builds it.
 - [ ] Artifacts are produced by CI from a tag, not by a human.
-- [ ] Native Mongo listeners and Docker host port publications are loopback-bound in
+- [x] Native-package Mongo listeners and Docker host port publications are loopback-bound in
   every shipped default until authentication exists
   ([#5](https://github.com/mieweb/chimeraDB/issues/5)); container binds are the explicit
-  exception described in the delivery priorities above.
+  exception described in the delivery priorities above. Verified in all four Linux
+  package/image combinations and both clean CI Homebrew installations.
 
 ---
 
