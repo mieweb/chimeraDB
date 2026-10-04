@@ -1,10 +1,18 @@
 # Change Streams Plan — `$changeStream` served from the M5 oplog
 
-**Status:** specced 2026-08-10, not started.
+**Status:** implemented; release hardening verified 2026-10-04 on MariaDB 10.11.18 and 11.8.8.
 **Owner:** unassigned.
 **Parent:** [chimeraDB-plan.md § Milestone 5](chimeraDB-plan.md#milestone-5--oplog--tailable-cursors-the-meteor-enabler) — this is M5's sequel, not a rewrite of it.
 
 ---
+
+The release pass checks retention after every stream read, including reads after
+parking and cursors opened on an empty oplog. NULL event rendering now fails
+explicitly, and database-wide watches return the documented unsupported error.
+The full native suite passes on both server series: 88 unit cases, the parked-prune
+regression in [test-changestream-regressions.sh](chimera/scripts/test-changestream-regressions.sh),
+SQL/wire demos and all nine MongoDB differential specs. The sections below retain
+the original implementation rationale and completed milestone checklist.
 
 ## 1. Why this exists (read this first)
 

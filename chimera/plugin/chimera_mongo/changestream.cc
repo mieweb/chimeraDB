@@ -58,7 +58,9 @@ OplogBatch read_changestream(SqlSession& sql, const Namespace& ns, uint64_t afte
   OplogBatch batch;
   batch.last_seq = after_seq;
   for (const auto& row : rows.rows) {
-    if (!row[0] || !row[1]) continue;
+    if (!row[0] || !row[1]) {
+      throw internal_error("oplog row rendered NULL — kEventExpr regression");
+    }
     batch.last_seq = std::strtoull(row[0]->c_str(), nullptr, 10);
     batch.documents.push_back(from_extjson(*row[1]));
   }
@@ -87,13 +89,15 @@ uint64_t oplog_min_seq(SqlSession& sql) {
 }
 
 void require_change_stream_history(SqlSession& sql, uint64_t after_seq) {
-  // Resuming from the head of an empty oplog is the ordinary cold start.
-  if (after_seq == 0) return;
-
   const uint64_t oldest = oplog_min_seq(sql);
+  // Zero is a valid position only while the oplog is still empty or starts at
+  // its first row. A cursor opened before the first write must still detect a
+  // later prune; bypassing every check for zero would silently lose that burst.
+  if (oldest == 0 && after_seq == 0) return;
   // An oplog that has never held a row cannot have issued the token being
   // presented, so the token is as lost as a pruned one.
-  if (oldest != 0 && after_seq + 1 >= oldest) return;
+  // Subtract from the nonzero minimum rather than overflowing after_seq + 1.
+  if (oldest != 0 && after_seq >= oldest - 1) return;
 
   throw change_stream_history_lost(
       "the resume point is no longer in the oplog; resume from a later point or resync "
