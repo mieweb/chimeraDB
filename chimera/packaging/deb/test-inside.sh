@@ -4,12 +4,51 @@ set -euo pipefail
   echo 'Run deb/test.sh; this script is only for its disposable container.' >&2; exit 1;
 }
 export DEBIAN_FRONTEND=noninteractive
+die() { printf 'package test: %s\n' "$*" >&2; exit 1; }
+package_version() {
+  local directory=$1 plugin file package architecture version
+  local plugins=("$directory/chimeradb-plugin-${SERIES}_"*.deb)
+  [[ ${#plugins[@]} == 1 && -f ${plugins[0]} ]] ||
+    die "expected exactly one plugin package for series $SERIES in $directory"
+  plugin=${plugins[0]}
+  version=$(dpkg-deb -f "$plugin" Version)
+  # Validate every input before apt changes anything. Both sets must have the
+  # requested series/architecture and a consistent package version.
+  for file in "$directory"/*.deb; do
+    package=$(dpkg-deb -f "$file" Package)
+    architecture=$(dpkg-deb -f "$file" Architecture)
+    case "$package" in
+      chimeradb|chimeradb-common)
+        [[ $architecture == all ]] || die "unexpected architecture in $file"
+        ;;
+      "chimeradb-plugin-$SERIES"|"chimeradb-plugin-$SERIES-dbgsym")
+        [[ $architecture == "$ARCH" ]] || die "expected $ARCH package: $file"
+        ;;
+      *) die "unexpected package $package in $directory" ;;
+    esac
+    [[ $(dpkg-deb -f "$file" Version) == "$version" ]] ||
+      die "mixed package versions in $directory"
+  done
+  printf '%s\n' "$version"
+}
 cd /packages
 sha256sum --check SHA256SUMS
+current_version=$(package_version /packages)
+initial_packages=/packages
+previous_version=
+if [[ -d /previous-packages ]]; then
+  (cd /previous-packages && sha256sum --check SHA256SUMS)
+  previous_version=$(package_version /previous-packages)
+  dpkg --compare-versions "$current_version" gt "$previous_version" ||
+    die "current version $current_version must be newer than previous version $previous_version"
+  initial_packages=/previous-packages
+fi
 printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d
 chmod 755 /usr/sbin/policy-rc.d
 apt-get update
-apt-get install -y --no-install-recommends ./*.deb
+apt-get install -y --no-install-recommends "$initial_packages"/*.deb
+installed_version=$(dpkg-query -W -f='${Version}' "chimeradb-plugin-$SERIES")
+[[ $installed_version == "${previous_version:-$current_version}" ]] || die 'wrong initial package version installed'
 mkdir -p /tmp/chimera-data
 chown mysql:mysql /tmp/chimera-data
 mariadb-install-db --no-defaults --user=mysql --datadir=/tmp/chimera-data \
@@ -43,9 +82,23 @@ SQL
 [[ $(sql -e 'SELECT COUNT(*) FROM package_test.persist') == 1 ]]
 stop_server
 
-# Reinstall exercises dpkg's upgrade/configuration path, including preserving a
-# user-modified conffile. It is not a claim to test cross-version data migration.
 printf '\n# administrator setting retained across upgrade\n' >> /etc/mysql/mariadb.conf.d/60-chimera.cnf
+if [[ -n $previous_version ]]; then
+  apt-get install -y --no-install-recommends /packages/*.deb
+  upgraded_version=$(dpkg-query -W -f='${Version}' "chimeradb-plugin-$SERIES")
+  [[ $upgraded_version == "$current_version" ]] || die 'upgrade did not install the requested version'
+  dpkg --compare-versions "$upgraded_version" gt "$installed_version" || die 'installed package version did not increase'
+  grep -q 'administrator setting retained' /etc/mysql/mariadb.conf.d/60-chimera.cnf
+  start_server
+  chimeradb status --socket=/tmp/chimera-test.sock --user=root
+  [[ $(sql -e "SELECT plugin_status FROM information_schema.plugins WHERE plugin_name='chimera_mongo'") == ACTIVE ]]
+  [[ $(sql -e 'SELECT COUNT(*) FROM package_test.persist') == 1 ]]
+  [[ $(sql package_test -e "SELECT mongo('db.persist.countDocuments({})')") == 1 ]]
+  stop_server
+  printf 'PASS: package version upgrade %s -> %s, active plugin, config and data preserved\n' "$installed_version" "$upgraded_version"
+fi
+
+# Retain the reinstall path as a separate check even after a version upgrade.
 apt-get install -y --reinstall ./*.deb
 grep -q 'administrator setting retained' /etc/mysql/mariadb.conf.d/60-chimera.cnf
 start_server

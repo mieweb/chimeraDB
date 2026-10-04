@@ -5,16 +5,24 @@
 
 #include <deque>
 #include <limits>
+#include <optional>
 #include <utility>
+#include <variant>
 
 #include "changestream.h"
 #include "chimera/error.h"
 
 namespace {
-std::deque<chimera::ResultSet> results;
+std::deque<std::variant<chimera::ResultSet, chimera::TranslatorError>> results;
+unsigned query_count = 0;
+unsigned schema_installs = 0;
+std::optional<chimera::TranslatorError> install_error;
 
 void return_rows(std::vector<chimera::Row> rows) {
   results.clear();
+  query_count = 0;
+  schema_installs = 0;
+  install_error.reset();
   chimera::ResultSet result;
   result.rows = std::move(rows);
   results.push_back(std::move(result));
@@ -28,15 +36,21 @@ SqlSession::SqlSession() = default;
 SqlSession::~SqlSession() = default;
 ResultSet SqlSession::query(const std::string&) {
   REQUIRE_FALSE(results.empty());
-  ResultSet result = std::move(results.front());
+  ++query_count;
+  auto result = std::move(results.front());
   results.pop_front();
-  return result;
+  if (const auto* error = std::get_if<TranslatorError>(&result)) throw *error;
+  return std::move(std::get<ResultSet>(result));
 }
 std::string SqlSession::render(std::string_view sql, const std::vector<Param>&) const {
   return std::string(sql);
 }
 std::string Namespace::text() const { return db + "." + collection; }
 uint64_t oplog_head(SqlSession&) { return 0; }
+void install_oplog_schema(SqlSession&) {
+  ++schema_installs;
+  if (install_error) throw *install_error;
+}
 }  // namespace chimera
 
 using namespace chimera;
@@ -98,4 +112,67 @@ TEST_CASE("change-stream storage preserves empty and populated batch positions")
   batch = read_changestream(sql, ns, 10, 100);
   CHECK(batch.last_seq == 12);
   CHECK(batch.documents.size() == 2);
+}
+
+TEST_CASE("the first operation-time read bootstraps a missing clock and retries") {
+  SqlSession sql;
+  return_rows({{"0", "0"}});
+  results.push_front(namespace_not_found("Table chimera_meta.oplog_clock does not exist"));
+  const OperationTime now = current_operation_time_or_initialize(sql);
+  CHECK(now.t == 0);
+  CHECK(now.i == 0);
+  CHECK(query_count == 2);
+  CHECK(schema_installs == 1);
+  CHECK(results.empty());
+}
+
+TEST_CASE("an existing operation clock is read without schema DDL") {
+  SqlSession sql;
+  return_rows({{"1700000000", "7"}});
+  const OperationTime now = current_operation_time_or_initialize(sql);
+  CHECK(now.t == 1700000000);
+  CHECK(now.i == 7);
+  CHECK(query_count == 1);
+  CHECK(schema_installs == 0);
+}
+
+TEST_CASE("operation-time bootstrap does not hide unrelated SQL errors") {
+  SqlSession sql;
+  return_rows({});
+  results.front() = internal_error("clock storage read failed");
+  CHECK_THROWS_WITH_AS(current_operation_time_or_initialize(sql),
+                       "clock storage read failed", TranslatorError);
+  CHECK(query_count == 1);
+  CHECK(schema_installs == 0);
+}
+
+TEST_CASE("operation-time bootstrap propagates failed initialization and failed retries") {
+  SqlSession sql;
+  return_rows({{"0", "0"}});
+  results.push_front(namespace_not_found("clock is missing"));
+  install_error = internal_error("schema initialization denied");
+  CHECK_THROWS_WITH_AS(current_operation_time_or_initialize(sql),
+                       "schema initialization denied", TranslatorError);
+  CHECK(query_count == 1);
+  CHECK(schema_installs == 1);
+  CHECK(results.size() == 1);
+
+  return_rows({});
+  results.front() = namespace_not_found("clock is still missing after initialization");
+  results.push_front(namespace_not_found("clock is missing"));
+  CHECK_THROWS_WITH_AS(current_operation_time_or_initialize(sql),
+                       "clock is still missing after initialization", TranslatorError);
+  CHECK(query_count == 2);
+  CHECK(schema_installs == 1);
+  CHECK(results.empty());
+}
+
+TEST_CASE("transactional operation-time reads never initialize missing schema") {
+  SqlSession sql;
+  return_rows({});
+  results.front() = namespace_not_found("clock is missing inside a transaction");
+  CHECK_THROWS_WITH_AS(current_operation_time(sql),
+                       "clock is missing inside a transaction", TranslatorError);
+  CHECK(query_count == 1);
+  CHECK(schema_installs == 0);
 }

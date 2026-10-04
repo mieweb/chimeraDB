@@ -113,4 +113,19 @@ OperationTime current_operation_time(SqlSession& sql) {
   return now;
 }
 
+OperationTime current_operation_time_or_initialize(SqlSession& sql) {
+  try {
+    return current_operation_time(sql);
+  } catch (const TranslatorError& error) {
+    // The first ping or no-op delete may precede both the first write and the
+    // pruner's initial pass. Only the SQL adapter's missing-table/database
+    // error justifies bootstrapping; permission/storage failures stay visible.
+    if (error.code() != 26) throw;
+  }
+  install_oplog_schema(sql);
+  // A failed install or retry propagates. Do not manufacture a zero timestamp
+  // or loop indefinitely when the underlying schema cannot be made usable.
+  return current_operation_time(sql);
+}
+
 }  // namespace chimera

@@ -317,7 +317,7 @@ Bson cursor_reply(int64_t cursor_id, const std::string& ns, const char* batch_na
 // because by now a neighbouring write may have moved the clock on.
 void append_operation_time(Bson& reply, SqlSession& sql,
                            const std::optional<OperationTime>& stamp = std::nullopt) {
-  const OperationTime now = stamp ? *stamp : current_operation_time(sql);
+  const OperationTime now = stamp ? *stamp : current_operation_time_or_initialize(sql);
   bson_append_timestamp(reply.get(), "operationTime", -1, now.t, now.i);
 }
 
@@ -901,6 +901,9 @@ Bson cmd_find_and_modify(Ctx& ctx) {
 
   Collection collection(ctx.sql(), ctx.ns());
   if (!remove) collection.create(/*error_if_exists=*/false);
+  // Removing from a nonexistent collection is a successful no-op. Its reply
+  // still needs a clock; initialize it before entering the write transaction.
+  if (remove) (void)current_operation_time_or_initialize(ctx.sql());
 
   Bson value;  // the document to report back
   bool have_value = false;

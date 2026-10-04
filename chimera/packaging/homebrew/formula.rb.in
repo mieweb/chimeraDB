@@ -86,13 +86,15 @@ class @CLASS@ < Formula
       SQL: 127.0.0.1:3306; Mongo: 127.0.0.1:27017.
       Config: #{etc}/#{name}.cnf
       Data: #{var}/#{name} (preserved on uninstall).
+      The service initializes this dedicated data directory; keep the datadir
+      setting at this path. Port and listener settings can be customized.
       The Mongo listener has no authentication; keep it on loopback.
       Do not also start mariadb@@SERVER@ on these ports.
 
       After upgrading mariadb@@SERVER@, rebuild this source-only plugin:
         brew reinstall #{name}
         brew services restart #{name}
-      Its service checks the exact MariaDB version before loading the plugin.
+      Its service checks the MariaDB version and keg revision before loading the plugin.
 
       Stop this service before uninstalling: brew services stop #{name}
     EOS

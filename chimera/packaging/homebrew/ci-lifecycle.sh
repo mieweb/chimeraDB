@@ -46,6 +46,43 @@ lines.append("# ChimeraDB lifecycle test: preserve this local customization")
 path.write_text("\n".join(lines) + "\n")
 PY
 before=$(shasum -a 256 "$config" | awk '{print $1}')
+
+# Same upstream version, different Homebrew keg revision: refuse before data
+# initialization. Restore metadata even when the regression assertion fails.
+python3 - "$prefix" "$maria" "$config" "$data" <<'PY'
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+
+prefix, maria, config, data = map(Path, sys.argv[1:])
+marker = prefix / "share/chimeradb/mariadb-prefix"
+original = marker.read_text()
+env = dict(os.environ, CHIMERA_PREFIX=str(prefix), CHIMERA_MARIADB_PREFIX=str(maria),
+           CHIMERA_DEFAULTS_FILE=str(config), CHIMERA_DATA_DIR=str(data))
+try:
+    marker.write_text(original.strip() + "-stale-revision\n")
+    process = subprocess.Popen([str(prefix / "libexec/chimeradb-service")],
+                               env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               start_new_session=True)
+    try:
+        output, _ = process.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            process.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+        raise RuntimeError("stale MariaDB keg was allowed to start")
+    assert process.returncode != 0, "stale MariaDB keg was accepted"
+    assert b"plugin was built for MariaDB keg" in output, output.decode()
+    assert not data.exists(), "stale MariaDB keg initialized service data"
+    print("PASS: stale MariaDB keg rejected before initialization")
+finally:
+    marker.write_text(original)
+PY
 running=false
 cleanup() {
   if $running; then

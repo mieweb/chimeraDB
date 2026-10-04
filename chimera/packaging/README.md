@@ -9,9 +9,15 @@ Owned by [release-plan.md](../../release-plan.md) (M9).
 | [homebrew/](homebrew/README.md) | Source-only formula generation, a dedicated macOS service and staged install checks. |
 | [deb/](deb/README.md) | Debian 12 packages, exact server dependencies and install/remove validation. |
 
-The Mac images and ARM Debian package lifecycle pass on both server series under
-OrbStack. Homebrew installation and Intel VM acceptance are tracked in the
-[release plan](../../release-plan.md). Nothing here is a published release yet.
+Both server series pass Debian package and Docker runtime tests on arm64 and
+amd64, locally under OrbStack and on native Linux CI runners. Homebrew and Intel
+VM acceptance are tracked in the [release plan](../../release-plan.md). Nothing
+here is a published release yet.
+
+`./chimera/packaging/source.sh --ref <commit-or-tag>` exports only committed
+ChimeraDB sources, with a checksum and Git commit record, for a release asset or
+Homebrew formula. Outputs go to `chimera/packaging/dist/source/`; ignored runtime
+data and upstream source trees are excluded.
 
 Nothing here is required to develop against the existing macOS source builds. `chimera/scripts/` remains the entry
 point for the normal loop; the image below just runs those same scripts on Debian.

@@ -72,6 +72,28 @@ the package lifecycle; it does not claim a migration test between two different
 ChimeraDB releases. Wire-protocol acceptance is covered by the runtime image
 smoke test.
 
+For a real package-version upgrade, keep the previous artifacts and build the
+new revision into a separate output directory:
+
+```sh
+./chimera/packaging/deb/build.sh --series 10.11 --arch amd64 --revision 2 \
+  --output "$PWD/chimera/packaging/dist/debian-revision2"
+./chimera/packaging/deb/test.sh --series 10.11 --arch amd64 \
+  --packages "$PWD/chimera/packaging/dist/debian-revision2/10.11/amd64" \
+  --previous-packages "$PWD/chimera/packaging/dist/debian/10.11/amd64"
+```
+
+`--previous-packages` verifies both sets' checksums and package metadata before
+installation: they must target the selected series/architecture, each set must
+contain one consistent version, and the current version must be newer. It
+installs the previous packages, initializes a database, writes a document and
+customizes the config, then installs the current packages. Assertions require
+the installed version to increase, the plugin to remain active, and the config
+and data to survive. The normal reinstall, removal and purge tests then run too.
+A `0.1.0-1` → `0.1.0-2` result demonstrates a Debian packaging-revision upgrade;
+it is not evidence of a cross-ChimeraDB-version data migration or a MariaDB
+server-version upgrade.
+
 MongoDB is a trademark of MongoDB, Inc. MariaDB is a trademark of MariaDB plc.
 ChimeraDB is an independent project and is not affiliated with, endorsed by, or
 sponsored by MongoDB, Inc. or MariaDB plc. "MongoDB compatibility" describes

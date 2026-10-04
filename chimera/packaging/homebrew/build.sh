@@ -23,6 +23,7 @@ source_version=$(awk -F= '/^MYSQL_VERSION_(MAJOR|MINOR|PATCH)=/ {v=v sep $2; sep
 runtime_version=$("$server_prefix/bin/mariadbd" --version | sed -E 's/.*(Ver|Distrib) ([0-9]+\.[0-9]+\.[0-9]+).*/\2/')
 [[ $source_version == "$server".* && $source_version == "$runtime_version" ]] ||
   die "MariaDB source $source_version does not match runtime $runtime_version ($server required)"
+resolved_server_prefix=$(cd "$server_prefix" && pwd -P)
 
 mkdir -p "$build_dir" "$prefix/lib/chimeradb/plugin" "$prefix/libexec" "$prefix/share/chimeradb/sql"
 export CHIMERA_OUT=$build_dir
@@ -66,3 +67,4 @@ install -m 755 "$CHIMERA/cli/chimeradb" "$prefix/libexec/chimeradb"
 install -m 755 "$HERE/service.sh" "$prefix/libexec/chimeradb-service"
 install -m 644 "$CHIMERA/sql/catalog.sql" "$prefix/share/chimeradb/sql/"
 printf '%s\n' "$source_version" > "$prefix/share/chimeradb/mariadb-version"
+printf '%s\n' "$resolved_server_prefix" > "$prefix/share/chimeradb/mariadb-prefix"

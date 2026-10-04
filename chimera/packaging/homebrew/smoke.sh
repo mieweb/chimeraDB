@@ -67,10 +67,13 @@ start() {
 start
 [[ $(sql -e 'SELECT @@chimera_mongo_bind') == 127.0.0.1 ]] || die 'listener is not bound to loopback'
 [[ $(sql -e 'SELECT @@chimera_mongo_port') == "$mongo_port" ]] || die 'unexpected Mongo port'
+uri="mongodb://127.0.0.1:$mongo_port/?directConnection=true&serverSelectionTimeoutMS=5000"
+# A fresh service must answer a driver's ping before any collection write has
+# installed the oplog clock. Priming it via the SQL gateway hid this failure.
+"$prefix/libexec/chimeradb-wire-smoke" "$uri" --ping-only
 sql -e 'CREATE DATABASE package_smoke; USE package_smoke; SELECT mongo('\''db.docs.insertOne({_id:"persisted",value:"brew"})'\'');' >/dev/null
 [[ $(sql -e 'SELECT COUNT(*) FROM package_smoke.docs') == 1 ]] || die 'gateway insert did not reach SQL'
 [[ $(sql -e "SELECT COUNT(*) FROM chimera_meta.oplog WHERE ns='package_smoke.docs'") == 1 ]] || die 'gateway insert did not reach oplog'
-uri="mongodb://127.0.0.1:$mongo_port/?directConnection=true&serverSelectionTimeoutMS=5000"
 "$prefix/libexec/chimeradb-wire-smoke" "$uri"
 [[ $(sql -e 'SELECT COUNT(*) FROM package_smoke.wire_docs') == 1 ]] || die 'driver insert did not reach SQL'
 cleanup

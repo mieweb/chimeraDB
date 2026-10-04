@@ -44,6 +44,13 @@ jobs:
         run: ./chimera/packaging/deb/build.sh --server "${{ matrix.server }}" --arch "${{ matrix.arch }}"
       - name: test package installation and removal
         run: ./chimera/packaging/deb/test.sh --series "${{ matrix.server }}" --arch "${{ matrix.arch }}"
+      - name: build next package revision
+        run: >-
+          ./chimera/packaging/deb/build.sh --server "${{ matrix.server }}" --arch "${{ matrix.arch }}"
+          --revision 2 --output chimera/packaging/dist/upgrade
+          --mariadb-version "$(sed -n 's/^MariaDB package: //p' chimera/packaging/dist/debian/${{ matrix.server }}/${{ matrix.arch }}/build-info.txt)"
+      - name: test package version upgrade and removal
+        run: ./chimera/packaging/deb/test.sh --series "${{ matrix.server }}" --arch "${{ matrix.arch }}" --packages "chimera/packaging/dist/upgrade/${{ matrix.server }}/${{ matrix.arch }}" --previous-packages "chimera/packaging/dist/debian/${{ matrix.server }}/${{ matrix.arch }}"
       - name: build Docker runtime
         run: ./chimera/packaging/docker/build.sh --server "${{ matrix.server }}" --arch "${{ matrix.arch }}" --packages "chimera/packaging/dist/debian/${{ matrix.server }}/${{ matrix.arch }}" --tag chimeradb:ci
       - name: test drivers, change streams and persistent volume

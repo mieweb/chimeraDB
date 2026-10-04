@@ -10,6 +10,9 @@ die() { printf 'chimeradb service: %s\n' "$*" >&2; exit 1; }
 expected=$(cat "$CHIMERA_PREFIX/share/chimeradb/mariadb-version")
 actual=$(mariadbd --version | sed -E 's/.*(Ver|Distrib) ([0-9]+\.[0-9]+\.[0-9]+).*/\2/')
 [[ $actual == "$expected" ]] || die "plugin was built for MariaDB $expected, installed $actual; run brew reinstall ${CHIMERA_BREW_FORMULA:-chimeradb}"
+expected_prefix=$(cat "$CHIMERA_PREFIX/share/chimeradb/mariadb-prefix")
+actual_prefix=$(cd "$CHIMERA_MARIADB_PREFIX" && pwd -P)
+[[ $actual_prefix == "$expected_prefix" ]] || die "plugin was built for MariaDB keg $expected_prefix, installed $actual_prefix; run brew reinstall ${CHIMERA_BREW_FORMULA:-chimeradb}"
 mkdir -p "$CHIMERA_DATA_DIR"
 if [[ ! -d $CHIMERA_DATA_DIR/mysql ]]; then
   install_db="$CHIMERA_MARIADB_PREFIX/bin/mariadb-install-db"

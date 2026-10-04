@@ -1,6 +1,6 @@
 # ChimeraDB Release Plan — packaging, distribution, and what isn't coming with it
 
-**Date:** 2026-08-10
+**Date:** 2026-08-10 · **Last verified update:** 2026-10-04
 **Continues:** [chimeraDB-plan.md](chimeraDB-plan.md) (M0–M7 done). This file owns **M9 —
 Packaging & distribution**, and the tickets for three M8 items that are too large to be
 backlog lines.
@@ -39,25 +39,46 @@ against the server copies already in this repository.
 - Debian package recipes, Docker runtime/Compose/smoke scripts, Homebrew formula
   generation/build/service/smoke scripts, and the Linux package CI workflow are
   implemented. These are not yet published or certified release artifacts.
-- Native plugin builds succeeded against 10.11.18 and 11.8.8, including fresh
-  Homebrew-style staged builds using the existing repository servers. Both generated
-  formulae evaluate under Homebrew's Ruby DSL. The supported Homebrew MariaDB
-  dependencies have now been installed with the owner's approval.
+- The full native development test suite passes against MariaDB 10.11.18 and
+  11.8.8. Homebrew staging builds and runtime smoke tests also pass for both series
+  against the installed versioned Homebrew kegs, including a real Mongo C driver,
+  SQL visibility, loopback, the gateway, oplog and restart persistence.
 - Change-stream review fixes R1–R3 and cold-start history loss are implemented;
   88 server-independent tests, live regression and all nine differential specs pass
   on both native server versions.
 - Eight server-free CLI checks pass, including failed readiness when the plugin
-  is missing/inactive and Homebrew defaults-file forwarding. Docker Compose parses
-  successfully; these checks do not establish runtime image acceptance.
-- OrbStack is running. Both ARM package builds, install/reinstall/remove/purge
-  lifecycle tests, and full Docker runtime/persistence tests pass (MariaDB
-  10.11.18 and 11.8.9). Intel builds are progressing separately.
+  is missing/inactive and Homebrew defaults-file forwarding.
+- **All four Debian package and Docker combinations pass locally:** MariaDB
+  10.11.18 and 11.8.9 × `arm64` and `amd64`. Package tests cover installation,
+  repeated setup, conffile preservation on reinstall, restart, removal, purge and
+  data preservation. Runtime tests cover wire CRUD, SQL visibility, SQL-to-change
+  streams, oplog, `mongo()`, gateway isolation, host-loopback publication and data
+  surviving replacement of the container. These ran through OrbStack on the Mac;
+  the local `amd64` executions used emulation. The first two GitHub Actions runs
+  also passed all four Linux package/runtime combinations on native architecture
+  runners. These passes precede the latest fresh-installation readiness fix;
+  its complete rerun is pending.
+- Clean GitHub Actions macOS runners now pass both source formula installation
+  and `brew test --force` for both series. The subsequent launchd lifecycle test
+  exposed a first-ping failure before any document write: `oplog_clock` did not
+  yet exist. The failure was reproduced locally on both series. A focused core
+  fix now passes fresh-ping staging on both; deterministic helper regressions are
+  being added, and the full post-fix matrix remains pending.
+- The Homebrew service now checks the full recorded keg identity, including
+  package revision. A negative test confirms that a changed revision is rejected
+  before data initialization. Complete CI lifecycle/upgrade validation is pending.
+- The Debian upgrade script and CI steps now cover a concrete `0.1.0-1` →
+  `0.1.0-2` package upgrade, but that new path has not executed yet. Earlier
+  reinstall coverage is not being counted as a version upgrade.
 - Local `brew install` reached the toolchain prerequisite check and refused the
   host's stale Command Line Tools (26.3) on macOS 27. Full Xcode 27 is selected,
   but Apple's updater currently offers no CLT update. Native staged validation
   and clean-runner Homebrew CI are separate from this host-toolchain blocker.
-- No Proxmox VM has been selected or accessed. Native amd64/VM acceptance is pending.
-- Nothing has been published, and the package workflow has not run in GitHub Actions.
+- No Proxmox VM or native Debian Intel system has been selected or accessed.
+  Actual VM deployment and Debian systemd acceptance remain pending.
+- The package workflow has run in GitHub Actions, but the final corrected matrix
+  is not yet certified green. No public release assets, container manifests or
+  Homebrew tap have been published.
 
 **Network acceptance:** native packages bind the Mongo listener to loopback. The
 Docker image explicitly opts into binding within its container, while the supplied
@@ -91,16 +112,16 @@ same standard should apply to its own front page. M9 either makes each line true
 it. **Scope decision below: brew and apt (+ Docker, nearly free) get built; `dnf` gets cut
 from the README until someone wants it.**
 
-There is also a harder reason. Everything in M0–M7 was built and tested on exactly one
-machine: an arm64 Mac, against MariaDB source trees that live inside this repo. The project
-has never been compiled on Linux, never been built by anything but a human at this desk, and
-never been installed anywhere. Until that changes, "it works" means "it works here."
+At the original baseline everything in M0–M7 had been built and tested on exactly
+one arm64 Mac, against MariaDB source trees inside this repo. M9 now has the Linux
+package/runtime evidence above; clean-machine installation and distribution remain
+separate gates from development-tree correctness.
 
 ---
 
 ## M9.0 — It has never been built on Linux *(do this first; everything else is downstream)*
 
-Not a formality. Three concrete things are macOS-only today:
+At the original baseline, three concrete things were macOS-only:
 
 | Evidence | Why it breaks on Linux |
 |---|---|
@@ -153,23 +174,28 @@ Not a formality. Three concrete things are macOS-only today:
   > and the legacy `mongo` client has not shipped in an official tarball since 5.0, so there
   > is nothing to download — a Linux reference means building MongoDB inside the image.
   > `mongosh` is not a substitute: the specs call `db.runCommand()` synchronously and mongosh
-  > returns promises. **This is the remaining work in M9.0 and a hard prerequisite for
-  > M9.6.1.**
+  > returns promises. **This remains necessary for M9.0's full development pyramid
+  > and M9.6.1.** Packaged runtime acceptance now uses standalone Mongo and SQL
+  > drivers and therefore does not depend on this reference shell.
 
   What *is* proven on Debian 12 / arm64 against MariaDB 10.11.18 built by
   [build-server.sh](chimera/packaging/docker/build-server.sh): hygiene, all 73 translator
   unit tests, the plugin link *and load*, `probe-json`, and the SQL halves of `demo-m1` and
   `demo-projection` — every D3, D8 and D10 assertion, identical to macOS.
 
-- [ ] **M9.0.4** Same on arm64 **and** amd64 (see M9.1 on why the arch matters this early).
-  arm64 done as far as Correction 4 allows; on amd64 (emulated) hygiene and all 73 translator
-  tests pass, and the server layers are untried.
+- [ ] **M9.0.4** Run the complete development `test.sh` pyramid for both server series
+  on arm64 **and** amd64. All 88 server-independent tests and the packaged plugin,
+  SQL/Mongo, change-stream and persistence paths now pass in the Linux package
+  matrix. The Linux reference-dependent demos/differential suite have not yet run;
+  local amd64 package/runtime validation used emulation.
 
 **Exit criteria:** `test.sh` green for 10.11 and 11.8 inside a Debian container, on both
 architectures, with no source changes made outside `chimera/`.
 
-> **Status:** the last clause holds — every fix above landed inside `chimera/`. The rest is
-> gated on a Linux reference build (Correction 4), after which 11.8 and amd64 are only compute.
+> **Status:** no upstream MariaDB source patches were needed. The full native macOS
+> development suite passes on both series and all four Linux package/runtime
+> combinations pass. The original full Linux development-suite exit criterion is
+> still gated on the reference toolchain described in Correction 4.
 
 ---
 
@@ -177,10 +203,11 @@ architectures, with no source changes made outside `chimera/`.
 
 This is the crux of the whole milestone and needs a decision before any packaging code.
 
-Today the plugin is not built by us at all. [link-plugin.sh](chimera/scripts/link-plugin.sh)
+The development plugin is built through [link-plugin.sh](chimera/scripts/link-plugin.sh), which
 symlinks `chimera/plugin/chimera_mongo/` into the server tree and the **server's** CMake
 builds it via `MYSQL_ADD_PLUGIN` — which is precisely how ground rule 2 (zero upstream
-patches) is honored. A package build has no server tree.
+patches) is honored. Packaging obtains the matching server source as a build input;
+installed artifacts do not need that tree.
 
 | | **A. Build the server source in the image** | **B. Standalone CMakeLists against installed server headers** |
 |---|---|---|
@@ -188,6 +215,9 @@ patches) is honored. A package build has no server tree.
 | Image / time | Whole MariaDB tree per series per arch | Minutes; small image |
 | Cross-arch | **Impractical** — a full server build under qemu for the foreign arch is not a thing anyone will wait for | Cheap enough that qemu is tolerable, native runners better |
 | Risk | Low technical risk, high friction | Must reproduce `MYSQL_ADD_PLUGIN`'s defines by hand (`MYSQL_DYNAMIC_PLUGIN`, and the `MYSQL_SERVER` exposure that [M7.2](chimeraDB-plan.md#milestone-7--cross-language-ergonomics) confined to `mongogateway_udf.cc`) |
+
+This table records the original alternatives. D11 below supersedes its header
+availability and full-server-build cost assumptions.
 
 - [x] **M9.1.1** Spike: does Debian's `libmariadbd-dev` actually ship the server plugin
   headers (`mysql/plugin.h`, `mysql/service_sql.h` — M4.1 depends on the SQL service) for
@@ -203,10 +233,10 @@ patches) is honored. A package build has no server tree.
   two consumers).
 
   > **Yes**, at `<keg>/include/mysql/server/mysql/{plugin,service_sql}.h`. The spike also
-  > answers M9.3.2 for free: `mariadb@10.11` and `mariadb@11.8` both exist as formulae, so
-  > the tap never has to fetch its own server tarball. (M9.1.3 then found that shipped
-  > headers are not sufficient, which changes what the formula does with this — but the
-  > formula question of *which* server to depend on is settled.)
+  > identifies M9.3.2's runtime dependencies: `mariadb@10.11` and `mariadb@11.8`
+  > both exist. Shipped headers were subsequently found insufficient, so the
+  > ChimeraDB formula also obtains the matching verified source tarball to build
+  > the plugin target; it does not rebuild the server.
 - [x] **M9.1.3** **Decision** (record it as a locked decision, D11): A, B, or B-with-A-as-CI-referee.
   Recommendation: **B**, keeping A as the developer path, plus a CI job that builds both and
   diffs the resulting module's undefined-symbol set. Without that referee, path B rots
@@ -234,160 +264,202 @@ patches) is honored. A package build has no server tree.
   >
   > The referee is therefore deleted rather than built. Two build paths needed a diff to stay
   > honest; one build path is honest because it is one object.
-- [ ] **M9.1.4** Whatever is chosen, the plugin ABI is tied to a server series. Packages are
-  per-series; there is no "works on any MariaDB" artifact. Encode that in names and
-  dependencies (M9.2), not in a README caveat.
+- [x] **M9.1.4** Encode the ABI boundary in package names and dependencies. Plugin
+  packages are named per series and require the **exact MariaDB package version**
+  whose signed source was used at build time. The stricter patch-level dependency
+  protects the SQL gateway's internal `THD` access. Both versions and architectures
+  have installed and loaded successfully with these dependencies.
 
 ---
 
 ## M9.2 — Debian packages, built in Docker, for arm64 and amd64
 
-- [ ] **M9.2.1** `chimera/packaging/deb/` with the standard `debian/` metadata and
-  `chimera/packaging/deb/build.sh --series 10.11|11.8 --arch amd64|arm64|both`, using
-  `docker buildx`. Outputs to `chimera/packaging/dist/`. Script-first (ground rule 3): CI
-  runs the identical command.
-- [ ] **M9.2.2** Package split — the ABI split from M9.1.4 makes a single `chimeradb`
-  binary package impossible:
+- [x] **M9.2.1** [deb/build.sh](chimera/packaging/deb/build.sh)
+  `--series 10.11|11.8 --arch amd64|arm64|both` builds with `docker buildx`
+  and standard `debian/` metadata. Outputs go to
+  `chimera/packaging/dist/debian/<series>/<arch>/`, with checksums and a build
+  report recording the exact server package. CI uses the same script. All four
+  local builds completed. A fresh export directory prevents stale package
+  revisions being mixed into a later install.
+- [x] **M9.2.2** Package split:
+
   | Package | Arch | Contents |
   |---|---|---|
-  | `chimeradb-plugin-10.11` / `chimeradb-plugin-11.8` | any | `chimera_mongo.so` → `/usr/lib/mysql/plugin/` |
-  | `chimeradb-common` | all | SQL assets (`catalog.sql`, `oplog.sql`, `triggers.tpl.sql`) → `/usr/share/chimeradb/sql/`, the `chimeradb` CLI, man page |
-  | `chimeradb` | all | Meta-package depending on `chimeradb-common` + the plugin matching the installed server — so `apt install chimeradb` from the README still works |
-- [ ] **M9.2.3** **Config drop-in** `/etc/mysql/mariadb.conf.d/60-chimera.cnf`:
-  `plugin_load_add=chimera_mongo`, `chimera_mongo_port=27017`, and **`bind-address=127.0.0.1`
-  for the Mongo listener**. There is no authentication on that listener yet
-  ([#5](https://github.com/mieweb/chimeraDB/issues/5)), so a package that binds it to
-  `0.0.0.0` ships an unauthenticated database to the network. Localhost-only is not a default
-  to be polite about — it is the security control, and it must be impossible to get by
-  accident. The package description and `README` must say so in the same breath as the
-  install command.
-- [ ] **M9.2.4** **No clever maintainer scripts.** `postinst` cannot load SQL into a server
-  that may not be running, may be remote, may need credentials. Ship `chimeradb setup`
-  (loads the catalog/oplog SQL, creates the `mongo()` function) and have `postinst` print how
-  to run it. A failed `postinst` leaves apt in a broken state; a printed instruction does not.
+  | `chimeradb-plugin-10.11` / `chimeradb-plugin-11.8` | any | `chimera_mongo.so` in `/usr/lib/mysql/plugin/` and the config drop-in |
+  | `chimeradb-common` | all | `catalog.sql` in `/usr/share/chimeradb/sql/`, the CLI and man page |
+  | `chimeradb` | all | Metapackage requiring common and the versioned virtual `chimeradb-plugin` provided by either series package |
 
-  > Half done ahead of the packaging that consumes it: [cli/chimeradb](chimera/cli/chimeradb)
-  > exists and is exercised against both dev servers — `status` reports incomplete on a fresh
-  > datadir, `setup` loads `catalog.sql` and creates `mongo()`, re-running changes nothing,
-  > and `mongo('db.parts.findOne({})')` answers afterwards. One rule finds the SQL in every
-  > layout: `cli/../sql` in the checkout, `bin/../share/chimeradb/sql` in a `.deb` or a keg.
-  > There is no `oplog.sql`/`triggers.tpl.sql` to load — the plugin issues that DDL itself —
-  > so M9.2.2's package contents need correcting. `postinst` waits on M9.2.1.
-- [x] **M9.2.5** Decide what `chimeradb start` means on a systemd box, because the README
-  promises it. Honest options: (a) a thin wrapper over `systemctl start mariadb` that then
-  verifies the plugin loaded and prints both endpoints; (b) drop `start` on Debian and make
-  the CLI `setup`/`status`/`verify` only. Do **not** invent a second service manager
-  alongside systemd. README changes either way.
+  The two plugin packages conflict because they own the same module path.
+  Debhelper also produces a plugin `-dbgsym` artifact. There are no separate
+  `oplog.sql` or `triggers.tpl.sql` assets: the plugin creates that DDL itself.
+  Install the files from one output directory with `apt install ./chimeradb*.deb`;
+  bare `apt install chimeradb` requires a public repository that does not yet exist.
+- [x] **M9.2.3** Ship `/etc/mysql/mariadb.conf.d/60-chimera.cnf` with
+  `plugin-load-add=chimera_mongo`, experimental plugin maturity, port 27017 and
+  **`loose-chimera-mongo-bind=127.0.0.1`**. This is the Mongo listener setting;
+  MariaDB's SQL `bind-address` is a separate option. The `loose-` prefix lets the
+  server restart after ordinary package removal leaves a conffile but removes
+  the module. All four lifecycle tests assert loopback and successful restart
+  after removal. Package descriptions and install documentation state that the
+  Mongo listener has no authentication ([#5](https://github.com/mieweb/chimeraDB/issues/5)).
+- [x] **M9.2.4** Maintainer scripts print setup/removal instructions and never
+  connect to the database or run SQL. `chimeradb setup` loads `catalog.sql` and
+  creates `mongo()`; repeated setup passes in all four package tests.
 
-  > **(a).** `start` is `systemctl start mariadb` followed by `status`, which is the question
-  > the user actually had — not "did mariadbd start" but "did the Mongo head come up with
-  > it". Where there is no systemd it refuses and names the command that machine does use,
-  > rather than guessing. `verify` is folded into `status`: two words for one answer is the
-  > kind of surface that exists because a plan listed it, and `status` already has to reach
-  > the server to say anything at all. It also reports a non-loopback bind as a warning every
-  > time, since the listener still authenticates nobody ([#5](https://github.com/mieweb/chimeraDB/issues/5)).
-  > The README edit rides with the exit-criteria item below, which already owns making every
-  > printed command true.
-- [ ] **M9.2.6** Initial target: Debian 12 (bookworm, native 10.11), plus MariaDB.org's
-  11.8 repository on bookworm. Native deployment is Intel; arm64 packages support the
-  Mac Docker image. Ubuntu and native Debian arm64 are deferred. Anything not tested
-  in this matrix is not claimed.
-- [ ] **M9.2.7** Dependencies: `mariadb-server` pinned to the matching series, plus libbson —
-  which is `libbson-1.0-0` on bookworm but `bson2` upstream, exactly the split the
-  [translator CMakeLists](chimera/translator/CMakeLists.txt#L12-L16) already handles. Verify
-  the *runtime* dependency is expressed correctly for each distro, not just the build one.
-- [ ] **M9.2.8** Package description carries the trademark statement from
-  [README § License & trademarks](README.md#license--trademarks) verbatim.
+  > **Observed packaging correction:** MariaDB's own Debian package has a trigger
+  > that may restart its service when plugin files change. ChimeraDB's maintainer
+  > scripts do not restart it, but installation cannot promise no service restart.
+  > The README, man page and install notice now explain this. Container tests and
+  > image builds suppress service starts with `policy-rc.d`; native installs need
+  > a maintenance window.
+- [x] **M9.2.5** `chimeradb start` uses `systemctl start mariadb` followed by
+  readiness/status checks on a systemd installation; it does not create another
+  service manager. Missing/inactive plugin and incomplete catalog return failure.
+  The Homebrew wrapper identifies its dedicated formula/service. Native Debian
+  systemd execution remains part of the deployment acceptance below.
+- [ ] **M9.2.6** Native deployment acceptance on **Debian 12 Intel with systemd**.
+  Debian 12 container coverage is complete for its 10.11 packages and MariaDB.org's
+  11.8 packages, on both architectures. Real Intel/systemd deployment has not run.
+  Ubuntu and native Debian arm64 remain deferred; arm64 packages support Mac Docker.
+- [x] **M9.2.7** The plugin depends on the **exact** `mariadb-server` package version
+  used to obtain its signed APT source; `dpkg-shlibdeps` derives runtime library
+  dependencies, including bookworm's `libbson-1.0-0`. Clean installation and plugin
+  load pass with `1:10.11.18-0+deb12u1` and `1:11.8.9+maria~deb12` on both architectures.
+  This does not claim compatibility with another distro or untested MariaDB update.
+- [x] **M9.2.8** Package descriptions carry the trademark statement from
+  [README § License & trademarks](README.md#license--trademarks).
+
+> **Build correction:** Debian's patched source declares a duplicate static client
+> archive output that Ninja rejects. Package builds use CMake's Unix Makefiles
+> generator for the server and still build only `chimera_mongo` (D11). The independent
+> translator build uses Ninja. No upstream source edit was needed.
 
 ---
 
 ## M9.3 — Homebrew tap
 
-- [ ] **M9.3.1** **The README's `brew install chimeradb` cannot work as written.** A bare
-  formula name means homebrew-core, which will not take a formula that builds against a
-  keg-only versioned server, and shouldn't be asked to before the project has users. A tap
-  must live in a repo literally named `homebrew-*`, so it cannot live in this repo either.
-  Decision: create `github.com/mieweb/homebrew-chimeradb`, and change the README to
-  `brew tap mieweb/chimeradb && brew install chimeradb`. Two lines instead of one, and true.
-- [ ] **M9.3.2** Which MariaDB does it build against? Homebrew's `mariadb` tracks latest,
-  which ChimeraDB does not support. Confirm which versioned formulae exist
-  (`mariadb@10.11`, `mariadb@11.8`) and depend on those explicitly. If neither exists, the
-  formula must fetch a matching source tarball itself — slow at install time but correct,
-  and it makes the M9.1 decision moot on macOS.
-- [ ] **M9.3.3** Where does the `.so` go? Writing into another formula's keg gets erased on
-  its next upgrade. Install into ChimeraDB's own prefix and have `caveats` print the exact
-  `plugin_dir`/`plugin_load_add` lines for `$(brew --prefix)/etc/my.cnf`. Verify the
-  advertised lines by pasting them into a clean machine — caveats that were never executed
-  are the most reliably wrong text in any formula.
-- [ ] **M9.3.4** Source-only formula first (KISS). Bottles are a later optimization and they
-  invalidate on every MariaDB keg bump, which is a maintenance treadmill nobody has signed
-  up for yet.
-- [ ] **M9.3.5** Release automation updates the tap on tag (formula source of truth lives in
-  the tap repo; this repo pushes the bump).
+- [ ] **M9.3.1** Publish `github.com/mieweb/homebrew-chimeradb` with verified
+  formulae and source archive checksums, then advertise
+  `brew tap mieweb/chimeradb && brew install chimeradb`. The private local test tap
+  `chimera-local/release-validation` has exercised source installation in CI; it is
+  not a public distribution. Bare `brew install chimeradb` is not promised today.
+- [x] **M9.3.2** Depend explicitly on Homebrew's versioned server formulae:
+  `chimeradb` uses `mariadb@11.8`, and `chimeradb@10.11` uses `mariadb@10.11`.
+  The generator takes the exact dependency source URL/checksum from Homebrew,
+  configures that server source and builds only the plugin target. Staging passes
+  against both installed supported kegs, and both source formula installs succeeded
+  on clean GitHub Actions macOS runners.
+- [ ] **M9.3.3** Complete clean-runner service and lifecycle acceptance. The module,
+  CLI and SQL install into ChimeraDB's own keg; generated `etc/<formula>.cnf`,
+  `var/<formula>` data and a dedicated launchd service avoid modifying another keg
+  or global `my.cnf`. Clean CI installation and `brew test --force` pass on both
+  series, but launchd acceptance exposed a missing `oplog_clock` on the first
+  Mongo ping before any writes. The focused fix passes fresh local staging on both;
+  the full launchd/reinstall/config-and-data persistence rerun remains pending.
+  A keg-identity guard and negative revision-change test now reject a changed
+  server keg before initialization. Complete its CI coverage and a real server
+  upgrade/rebuild test before marking upgrade acceptance complete.
+- [x] **M9.3.4** Source-only formula installation is implemented and has succeeded
+  for both series on clean CI runners. No bottles are published or required.
+- [ ] **M9.3.5** Add tag-driven tap updates. The canonical template and renderer
+  live in [homebrew/](chimera/packaging/homebrew/); a release must render the real
+  source URL/checksum and update the separate tap repository. This automation is
+  not implemented or published yet.
+
+> **Host limitation and CI distinction:** this Mac's stale CLT 26.3 on macOS 27
+> prevents a normal Homebrew formula build despite full Xcode 27 being selected.
+> Staging against the installed versioned kegs passes. Clean CI source installation
+> and formula tests now pass after correcting the unlinked-formula invocation.
+> Launchd then found the separate first-ping initialization bug described above;
+> its full lifecycle rerun remains open despite the focused local fix passing.
 
 ---
 
 ## M9.4 — Docker image *(first delivery; reuses M9.2 package construction)*
 
-- [ ] **M9.4.1** Debian 12 runtime base + matching MariaDB and ChimeraDB `.deb`s +
-  container config + entrypoint that runs `chimeradb setup` on an empty volume.
-  Use the same package sources as M9.2 so a base image cannot introduce a different
-  distro ABI. Test each architecture separately before publishing a multi-arch manifest.
-- [ ] **M9.4.2** Publish as `mieweb/chimeradb`, and fix the README's bare `chimeradb` image
-  name to match.
-- [ ] **M9.4.3** The image doubles as the package smoke test's happy path — it is the
-  cheapest way for a stranger to reach the party trick in
-  [README § The party tricks](README.md#the-party-tricks).
+- [x] **M9.4.1** [runtime.Dockerfile](chimera/packaging/docker/runtime.Dockerfile)
+  uses Debian 12 with the matching MariaDB and ChimeraDB packages. Its entrypoint
+  initializes an empty persistent volume and runs setup; the container config
+  explicitly enables its non-loopback listener. Images build and pass runtime
+  acceptance for both series and architectures through OrbStack and in the first
+  two native Linux CI runs. The latest fresh-ping fix still needs its matrix rerun.
+  Multi-architecture manifest publication is a separate, uncompleted gate.
+- [ ] **M9.4.2** Publish the verified images and multi-architecture manifest under
+  `mieweb/chimeradb`, then advertise that registry reference. Current artifacts are
+  local `chimeradb:0.1.0-<series>-<arch>` images, not published pulls.
+- [x] **M9.4.3** The packaged image passes the driver/SQL party trick, raw-SQL change
+  stream, oplog, gateway-isolation, graceful-stop and replacement-container
+  persistence tests for all four combinations. No source tree is present in the
+  running image. Actual Intel Proxmox VM acceptance remains open under M9.5.2.
 
 ---
 
 ## M9.5 — Verifying artifacts from the outside
 
-`test.sh` tests a build tree. It cannot tell you whether a package installs, and M6 already
-taught this project that the gap between "the harness passes" and "a real client works" is
-where the bugs live.
+Development-tree tests cannot establish installation, service or upgrade behavior.
+Package lifecycle and runtime-driver acceptance therefore have separate scripts.
 
-- [ ] **M9.5.1** `chimera/packaging/tests/smoke.sh` — against a **clean container with no
-  source tree**: install, `chimeradb setup`, insert via a driver over the wire, read the same
-  row via SQL, watch it arrive in the oplog, open a `$changeStream` and see a raw-SQL
-  `INSERT` arrive as an event, call `mongo('db.c.findOne({})')` from the SQL prompt. That
-  subset covers M4, M5 (both reactivity paths) and M7 through the packaged artifact only.
-- [ ] **M9.5.2** Initial matrix: Debian 12 packages/images × {10.11, 11.8} ×
-  {amd64, arm64}; Mac Docker, Mac Homebrew and Intel Proxmox VM acceptance as above.
-  Native Debian deployment targets amd64; Ubuntu and native Debian arm64 are deferred.
-- [ ] **M9.5.3** **Upgrade and purge are release-blocking tests.** A leftover
-  `plugin_load_add=chimera_mongo` in a conf.d file after the `.so` is gone means `mariadbd`
-  refuses to start — the package would break the user's database by being removed. Test
-  install → upgrade → purge → server still starts.
-- [ ] **M9.5.4** Verify the listener is bound to loopback in the shipped default (M9.2.3),
-  as an assertion, not a code review.
+- [x] **M9.5.1** [deb/test.sh](chimera/packaging/deb/test.sh) installs the artifacts
+  into a clean disposable Debian container; [docker/test.sh](chimera/packaging/docker/test.sh)
+  runs real Mongo/SQL drivers against the shipping image. All four combinations pass
+  wire CRUD, SQL visibility, oplog, a raw-SQL write arriving through a change stream,
+  `mongo()` and restart/replacement persistence. These tests use the packaged artifact
+  without the development source tree or Linux reference `mongo` shell.
+- [ ] **M9.5.2** Complete deployment acceptance beyond the local container matrix:
+  clean Homebrew formula tests plus launchd/lifecycle checks, an actual Intel Proxmox
+  Linux VM, and native Debian 12 Intel/systemd. The Debian package/image matrix
+  {10.11, 11.8} × {amd64, arm64} passes locally and in two native Linux CI runs;
+  local amd64 used emulation. The latest readiness fix requires a fresh full rerun.
+  Ubuntu and native Debian arm64 are deferred.
+- [ ] **M9.5.3** **Version upgrade remains a release gate.** Install → reinstall →
+  remove → purge → MariaDB still starts and preserves data passes for all four
+  combinations. A reinstall exercises conffile handling but is not a version upgrade.
+  [deb/test.sh](chimera/packaging/deb/test.sh) now accepts `--previous-packages DIR`
+  to install the older set, initialize/write/customize, upgrade to the newer set,
+  assert a strictly increased installed package version plus active plugin and
+  retained config/data, then run reinstall/removal/purge. Both inputs must match
+  series and architecture. CI now includes the concrete `0.1.0-1` → `0.1.0-2`
+  build/test steps, but actual upgrade execution is still pending;
+  retain its distinction from cross-ChimeraDB-version data migration and MariaDB
+  upgrade/rebuild acceptance.
+  Retained config after removal uses `loose-` plugin options; the missing module logs
+  an error but does not prevent MariaDB startup, as verified in the lifecycle tests.
+- [x] **M9.5.4** Runtime assertions confirm native-package Mongo loopback defaults
+  in all four package tests and host-loopback publication in all four Docker tests.
+  Homebrew staging also asserts loopback on both series. The image deliberately
+  binds inside its container; containers sharing its bridge are within the trust boundary.
 
 ---
 
-## M9.6 — CI, because there is none
+## M9.6 — CI and release automation
 
-[.github/](.github) contains only `copilot-instructions.md`.
-[test.sh](chimera/scripts/test.sh#L2) says "CI runs it twice (10.11, 11.8)"; nothing does.
-Packaging without CI means release artifacts built by hand on one Mac.
+[.github/workflows/test.yml](.github/workflows/test.yml) covers server-independent
+hygiene and translator/storage tests. [package.yml](.github/workflows/package.yml)
+builds and tests the Linux artifact matrix and installs/tests both Homebrew formulae.
+Initial GitHub Actions runs have occurred; their results must not be confused with
+completion of the corrected workflow or tag-driven publication.
 
-- [ ] **M9.6.1** `test.yml`: the M0–M7 pyramid, both series, on Linux (uses M9.0's image).
-
-  > Started: [.github/workflows/test.yml](.github/workflows/test.yml) runs hygiene and the
-  > translator unit tests on amd64 and arm64. Those are the two layers that need no MariaDB
-  > and no reference mongod, so they are exactly what CI can run before M9.0.3's correction 4
-  > is resolved. Verified by running the same two commands in the container on both
-  > architectures — 73/73 each.
-- [ ] **M9.6.2** `package.yml`: builds every artifact in M9.2–M9.4 and runs M9.5 on each.
-- [ ] **M9.6.3** `release.yml`: on tag, publishes `.deb`s to GitHub Releases, pushes the
-  Docker manifest, bumps the tap. Plain files on a release first; an APT repository with
-  signing is a separate decision with key-management consequences, and `apt install` from a
-  downloaded `.deb` is honest in the meantime.
-- [ ] **M9.6.4** Native arm64 runners where available rather than qemu; every workflow stays
-  a thin wrapper over `chimera/packaging/*.sh` so a failure is reproducible locally.
-  `test.yml` already does both: `ubuntu-24.04-arm` for arm64, and every step is one command
-  a developer runs identically.
-- [x] **M9.6.5** Wire in [check-hygiene.sh](chimera/scripts/check-hygiene.sh) — the SSPL
-  grep of ground rule 1 is a CI check that has never run in CI.
+- [ ] **M9.6.1** Extend `test.yml` to the full M0–M7 development pyramid for both
+  series on Linux. The existing native amd64/arm64 hygiene and unit jobs do not
+  replace the reference-dependent layers blocked by M9.0's Correction 4.
+- [ ] **M9.6.2** Obtain a green corrected `package.yml` matrix: Debian builds,
+  lifecycle tests and runtime-driver acceptance on native Linux runners, plus clean
+  Homebrew install, formula tests and service/lifecycle acceptance for both series.
+  The first two native Linux CI matrices pass all four package/runtime jobs, and
+  clean CI Homebrew installation plus formula tests pass on both series. Launchd
+  exposed the first-ping clock-initialization bug; focused local fixes pass, but
+  their full matrix, launchd lifecycle, keg-identity guard and package-version
+  upgrade coverage remain pending.
+- [ ] **M9.6.3** Implement `release.yml`: on tag, publish `.deb`s and corresponding
+  source to GitHub Releases, push the Docker manifest, and update the public tap.
+  None of these public release steps has run. Plain downloadable packages come
+  first; an APT repository and signing-key management remain a separate decision.
+- [x] **M9.6.4** Use native CI runners and thin script wrappers. Both Linux workflows
+  select `ubuntu-24.04-arm` for arm64 and `ubuntu-24.04` for amd64;
+  `package.yml` uses `macos-15` for Homebrew. Scripts are the shared local/CI entry
+  points. This configuration is complete; whole-workflow acceptance remains M9.6.2.
+- [x] **M9.6.5** [check-hygiene.sh](chimera/scripts/check-hygiene.sh) is wired into
+  `test.yml` to enforce the SSPL source boundary.
 
 ---
 
@@ -407,7 +479,11 @@ Packaging without CI means release artifacts built by hand on one Mac.
   > direction to be wrong in. `gitVersion` follows as `chimera-<VERSION>`. Verified against
   > both shells: `mongosh` prints `Using MongoDB: 6.0.0-chimera-0.1.0`, and the differential
   > suite is unchanged at 8/8.
-- [ ] **M9.7.3** Package version encodes both: `0.1.0-mariadb11.8`.
+- [x] **M9.7.3** Encode product and server identity without conflating them:
+  `chimeradb-plugin-11.8_0.1.0-1_amd64.deb` carries series in its package name,
+  product version/revision in its version, and an exact MariaDB package dependency.
+  `build-info.txt` records that dependency; common/metapackage versions stay shared
+  across series. Docker tags include product version, series and architecture.
 
 ---
 

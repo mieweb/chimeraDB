@@ -22,6 +22,9 @@ def scalar(statement, parameters=None):
 
 
 try:
+    # Readiness must include a first ping on an empty installation, before any
+    # insert has initialized the operationTime clock as a side effect.
+    assert mongo.admin.command("ping")["ok"] == 1
     assert scalar("SELECT plugin_status FROM information_schema.plugins "
                   "WHERE plugin_name='chimera_mongo'") == "ACTIVE"
     if "--verify-persistence" in sys.argv:

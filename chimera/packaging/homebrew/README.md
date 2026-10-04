@@ -11,6 +11,9 @@ separate data directory and config, keeping the normal MariaDB service independe
 It initializes the catalog automatically and defaults both protocols to loopback.
 The defaults are SQL `3306` and Mongo `27017`; change the dedicated config if those
 ports are already occupied. Never start both services on the same ports.
+The service initializes its dedicated `var/chimeradb` (or `var/chimeradb@10.11`)
+directory. Keep `datadir` at that generated path; changing only the config cannot
+relocate initialization. Ports and listener settings can be customized.
 
 ## Prepare the tap
 
@@ -21,10 +24,15 @@ After producing a versioned source archive containing `chimera/`, render both
 formulae with its real SHA-256:
 
 ```sh
+chimera/packaging/source.sh --ref <tested-commit-or-tag>
 python3 chimera/packaging/homebrew/render-formula.py \
   --url https://github.com/mieweb/chimeraDB/releases/download/v0.1.0/chimeradb-0.1.0.tar.gz \
   --sha256 <archive-sha256> --output /path/to/homebrew-chimeradb/Formula
 ```
+
+`source.sh` archives committed files only and writes the archive, SHA-256 and
+commit metadata under `chimera/packaging/dist/source/`. Use that archive's
+checksum and eventual published URL when generating release formulae.
 
 The generator reads `chimera/VERSION`; the output belongs in the tap repository.
 Do not publish placeholder checksums. The source URL and checksum must be updated
@@ -45,6 +53,7 @@ brew test chimeradb
 For 10.11 substitute `chimeradb@10.11` in the install, services and test commands.
 After MariaDB upgrades, run `brew reinstall chimeradb` and restart the ChimeraDB
 service. The service refuses to load a plugin built for a different MariaDB patch
+version or resolved keg, including a Homebrew revision bump with the same upstream
 version. Stop the service before uninstalling. Configuration and data are preserved;
 no plugin directive is inserted into global `my.cnf` or another formula's config.
 
