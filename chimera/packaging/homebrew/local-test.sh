@@ -68,6 +68,23 @@ if brew command trust >/dev/null 2>&1; then
   brew trust --formula "$tap/chimeradb" "$tap/chimeradb@10.11"
 fi
 if $reinstall; then
+  # Some Homebrew versions link non-keg-only formulae during reinstall even
+  # when their previous keg was unlinked. Restore that initial state on every
+  # exit, including a later build/test failure, without hiding the failure.
+  linked_keg=$(brew info --json=v2 "$tap/$formula" | python3 -c \
+    'import json, sys; print(json.load(sys.stdin)["formulae"][0]["linked_keg"] or "")')
+  if [[ -z $linked_keg ]]; then
+    restore_unlinked() {
+      local status=$?
+      trap - EXIT
+      if ! brew unlink "$tap/$formula"; then
+        printf 'homebrew local test: could not restore unlinked state for %s\n' "$tap/$formula" >&2
+        if ((status == 0)); then status=1; fi
+      fi
+      exit "$status"
+    }
+    trap restore_unlinked EXIT
+  fi
   brew reinstall --build-from-source "$tap/$formula"
 else
   # Both series can remain installed while existing PATH links stay untouched.

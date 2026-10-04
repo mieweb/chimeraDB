@@ -4,9 +4,13 @@ set -euo pipefail
   echo 'Run deb/test.sh; this script is only for its disposable container.' >&2; exit 1;
 }
 export DEBIAN_FRONTEND=noninteractive
+. /etc/os-release
 die() { printf 'package test: %s\n' "$*" >&2; exit 1; }
 package_version() {
   local directory=$1 plugin file package architecture version
+  [[ -f $directory/build-info.txt ]] || die "missing build-info.txt in $directory"
+  grep -Fxq "Distribution: Debian $VERSION_ID ($VERSION_CODENAME)" "$directory/build-info.txt" ||
+    die "packages in $directory were not built for Debian $VERSION_ID ($VERSION_CODENAME)"
   local plugins=("$directory/chimeradb-plugin-${SERIES}_"*.deb)
   [[ ${#plugins[@]} == 1 && -f ${plugins[0]} ]] ||
     die "expected exactly one plugin package for series $SERIES in $directory"

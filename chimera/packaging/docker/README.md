@@ -1,12 +1,14 @@
 # Runnable Docker image
 
 This is the release image recipe for Docker on an Apple Silicon Mac and
-`linux/amd64` in a Linux VM on Intel Proxmox. It installs the same Debian packages
+`linux/amd64` in a Linux guest on Intel Proxmox. It installs the same Debian packages
 as a native installation. It is separate from `dev-debian.Dockerfile` (compiler
 environment) and `build-wcdb-chimera.sh` (seeded WebChart development database).
 
-**Validation status:** both server-series images build and pass the full runtime
-smoke test on Apple Silicon using OrbStack. Intel builds and native VM validation
+**Validation status:** both server-series images pass the full runtime smoke
+test on Apple Silicon using OrbStack and natively on an Intel Proxmox LXC running
+Debian 13 with Docker Engine. Tests include initialization readiness, SQL/Mongo
+drivers, change streams and container replacement with persistent data. Details
 are tracked in the [release plan](../../../release-plan.md). No release image has
 been published.
 
@@ -31,7 +33,8 @@ before calling a release verified. `--packages DIR` reuses previously built
 packages from `chimera/packaging/dist/debian/<series>/<arch>/`.
 
 Connect with `mongosh mongodb://127.0.0.1:27017/appdb` and
-`mariadb -h127.0.0.1 -P3306 -uroot -p`. For local administrative SQL inside the
+`mariadb --skip-ssl -h127.0.0.1 -P3306 -uroot -p`. This loopback example does not
+configure SQL TLS; use the SSH tunnel below for remote access. For local administrative SQL inside the
 container, use `docker compose -f chimera/packaging/docker/compose.yaml exec db mariadb`.
 The local root account authenticates through the Unix socket; the password
 initializes `root@'%'` for TCP connections. Changing the environment variable
@@ -48,26 +51,29 @@ SQL-triggered change streams and the `mongo()` SQL function.
 
 ## Intel Proxmox
 
-Use a Debian Linux **VM** on Proxmox with Docker Engine and Compose installed.
-The hypervisor itself is not the installation target, and LXC nesting is not a
-tested target. Run the same build/test commands inside that VM with `--arch amd64`
-and `CHIMERA_IMAGE="chimeradb:$(cat chimera/VERSION)-10.11-amd64"`. Native amd64
-validation in this VM is required; emulation on a Mac alone does not complete it.
+Use a Debian Linux guest on Proxmox with Docker Engine and Compose installed.
+The verified deployment is a Debian 13 **LXC** with working Docker nesting;
+its Proxmox host was not modified. A VM remains an alternative, but has not been
+separately tested in this deployment. Run the same build/test commands inside
+the guest with `--arch amd64` and
+`CHIMERA_IMAGE="chimeradb:$(cat chimera/VERSION)-10.11-amd64"`.
+The images retain their Debian 12 userland on a Debian 13 host. Native amd64
+acceptance matters; emulation on a Mac alone does not establish it.
 
-To move an already built Intel image from the Mac without rebuilding on the VM:
+To move an already built Intel image from the Mac without rebuilding on the guest:
 
 ```sh
 ./chimera/packaging/docker/export.sh --server 10.11 --arch amd64
 ```
 
 Copy the resulting `.tar.gz` and `.sha256` from `chimera/packaging/dist/images/`
-to the VM. Verify with `sha256sum -c <image>.tar.gz.sha256`, then
+to the guest. Verify with `sha256sum -c <image>.tar.gz.sha256`, then
 `docker load -i <image>.tar.gz`. Use that image tag with the same Compose file.
 These archives contain the image only; they do not contain any database volume
 or the local runtime password.
 
-Compose publishes SQL and Mongo on the VM's loopback. Reach them from a Mac
-using SSH forwarding, substituting the real VM host:
+Compose publishes SQL and Mongo on the guest's loopback. Reach them from a Mac
+using SSH forwarding, substituting the real guest host:
 
 ```sh
 ssh -N -L 3306:127.0.0.1:3306 -L 27017:127.0.0.1:27017 user@debian-vm

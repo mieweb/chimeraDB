@@ -2,6 +2,7 @@
 # Internal builder entry point. Run build.sh on the host.
 set -euo pipefail
 series=${SERIES:?}
+. /etc/os-release
 jobs=${JOBS:-4}
 export CHIMERA_OUT=/build
 export CMAKE_BUILD_PARALLEL_LEVEL=$jobs
@@ -49,7 +50,7 @@ export CHIMERA_SERIES=$series CHIMERA_SERVER_VERSION=$version CHIMERA_PLUGIN=$pl
 cat > debian/changelog <<EOF
 chimeradb ($release-${REVISION:-1}) unstable; urgency=medium
 
-  * Package ChimeraDB for the supported MariaDB series on Debian 12.
+  * Package ChimeraDB for MariaDB $series on Debian $VERSION_ID ($VERSION_CODENAME).
 
  -- ChimeraDB contributors <support@mieweb.com>  $(date --utc --date="@$SOURCE_DATE_EPOCH" -R)
 EOF
@@ -62,7 +63,7 @@ ChimeraDB: $release-${REVISION:-1}
 MariaDB package: $version
 MariaDB series: $series
 Architecture: $(dpkg --print-architecture)
-Distribution: Debian 12 (bookworm)
+Distribution: Debian $VERSION_ID ($VERSION_CODENAME)
 SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH
 EOF
 cd /packages

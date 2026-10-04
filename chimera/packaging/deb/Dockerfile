@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 # Build with the repository root as context. BuildKit only receives chimera/.
-FROM debian:bookworm AS repository
+ARG DEBIAN_SUITE=bookworm
+FROM debian:${DEBIAN_SUITE} AS repository
 ARG SERIES=10.11
 ENV DEBIAN_FRONTEND=noninteractive
 COPY chimera/packaging/deb/configure-repository.sh /usr/local/bin/chimera-configure-repository

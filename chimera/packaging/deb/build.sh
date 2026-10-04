@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
-# Build Debian 12 packages using exactly the same Dockerfile locally and in CI.
+# Build Debian packages using exactly the same Dockerfile locally and in CI.
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 usage() {
-  echo 'usage: build.sh --series 10.11|11.8 [--arch amd64|arm64|both] [--mariadb-version VERSION] [--revision N] [--output DIR] [--jobs N]'
+  echo 'usage: build.sh --series 10.11|11.8 [--suite bookworm|trixie] [--arch amd64|arm64|both] [--mariadb-version VERSION] [--revision N] [--output DIR] [--jobs N]'
 }
 series=10.11
+suite=bookworm
 case $(uname -m) in arm64|aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
 version=
 revision=1
-output="$ROOT/chimera/packaging/dist/debian"
+output=
 jobs=4
 while (($#)); do
   case $1 in
     --series|--server) series=${2:?missing series}; shift 2 ;;
+    --suite) suite=${2:?missing Debian suite}; shift 2 ;;
     --arch) arch=${2:?missing architecture}; shift 2 ;;
     --mariadb-version) version=${2:?missing version}; shift 2 ;;
     --revision) revision=${2:?missing revision}; shift 2 ;;
@@ -26,9 +28,17 @@ while (($#)); do
   esac
 done
 [[ $series == 10.11 || $series == 11.8 ]] || die 'series must be 10.11 or 11.8'
+[[ $suite == bookworm || $suite == trixie ]] || die 'suite must be bookworm or trixie'
+[[ $suite != trixie || $series == 11.8 ]] || die 'Debian 13 (trixie) supports MariaDB 11.8; use bookworm for 10.11'
 [[ $arch == amd64 || $arch == arm64 || $arch == both ]] || die 'arch must be amd64, arm64 or both'
 [[ $jobs =~ ^[1-9][0-9]*$ ]] || die 'jobs must be a positive integer'
 [[ $revision =~ ^[1-9][0-9]*$ ]] || die 'revision must be a positive integer'
+# Keep the established Debian 12 paths unchanged, and keep Debian 13 artifacts
+# separate so an install wildcard cannot combine builds for two distributions.
+if [[ -z $output ]]; then
+  output="$ROOT/chimera/packaging/dist/debian"
+  [[ $suite == bookworm ]] || output+="-$suite"
+fi
 command -v docker >/dev/null || die 'Docker with buildx is required'
 docker info >/dev/null || die 'cannot reach Docker; check the active context, socket permissions and container engine'
 docker buildx version >/dev/null
@@ -44,6 +54,7 @@ for architecture in "${architectures[@]}"; do
   trap '[[ -z ${staging:-} ]] || rm -rf "$staging"' EXIT
   docker buildx build --platform "linux/$architecture" \
     --file "$HERE/Dockerfile" --target packages \
+    --build-arg "DEBIAN_SUITE=$suite" \
     --build-arg "SERIES=$series" --build-arg "MARIADB_VERSION=$version" \
     --build-arg "REVISION=$revision" --build-arg "JOBS=$jobs" \
     --build-arg "SOURCE_DATE_EPOCH=$epoch" \

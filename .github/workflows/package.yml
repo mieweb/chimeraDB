@@ -61,6 +61,35 @@ jobs:
           path: chimera/packaging/dist/debian/${{ matrix.server }}/${{ matrix.arch }}/
           if-no-files-found: error
 
+  debian13:
+    needs: cli
+    name: Debian 13 / MariaDB 11.8 / amd64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build Debian 13 packages
+        run: ./chimera/packaging/deb/build.sh --suite trixie --series 11.8 --arch amd64
+      - name: test Debian 13 package installation and removal
+        run: ./chimera/packaging/deb/test.sh --suite trixie --series 11.8 --arch amd64
+      - name: build next Debian 13 package revision
+        run: >-
+          ./chimera/packaging/deb/build.sh --suite trixie --series 11.8 --arch amd64
+          --revision 2 --output chimera/packaging/dist/debian-trixie-upgrade
+          --mariadb-version "$(sed -n 's/^MariaDB package: //p' chimera/packaging/dist/debian-trixie/11.8/amd64/build-info.txt)"
+      - name: test Debian 13 package version upgrade and removal
+        run: >-
+          ./chimera/packaging/deb/test.sh --suite trixie --series 11.8 --arch amd64
+          --packages chimera/packaging/dist/debian-trixie-upgrade/11.8/amd64
+          --previous-packages chimera/packaging/dist/debian-trixie/11.8/amd64
+      # Shipping Docker images use bookworm; trixie artifacts target native hosts.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-trixie-11.8-amd64
+          path: chimera/packaging/dist/debian-trixie/11.8/amd64/
+          if-no-files-found: error
+
   homebrew:
     needs: cli
     name: Homebrew / MariaDB ${{ matrix.server }}

@@ -29,6 +29,7 @@ if [[ -z $packages ]]; then
   packages="$HERE/../dist/debian/$series/$arch"
 fi
 [[ -f $packages/SHA256SUMS && -f $packages/build-info.txt ]] || die 'missing package checksums/build-info.txt'
+grep -Fxq 'Distribution: Debian 12 (bookworm)' "$packages/build-info.txt" || die 'the runtime image requires Debian 12 (bookworm) packages'
 grep -qx "MariaDB series: $series" "$packages/build-info.txt" || die 'packages were built for another server series'
 grep -qx "Architecture: $arch" "$packages/build-info.txt" || die 'packages were built for another architecture'
 release=$(cat "$ROOT/chimera/VERSION")

@@ -24,8 +24,8 @@ image without making native Debian the first deliverable.
 |---|---|---|
 | 1 | Docker on Apple Silicon Mac (`linux/arm64`) | Build image; fresh-volume initialization; SQL and Mongo clients; change streams; graceful stop; replacement container preserves data |
 | 2 | Homebrew on macOS | Source-only tap install; dedicated service; setup; both protocols; restart; MariaDB upgrade/rebuild behavior |
-| 3 | Docker in a Linux VM on Intel Proxmox (`linux/amd64`) | Same image recipe and acceptance as Mac, run on the actual VM; SSH forwarding and volume persistence |
-| 4 | Native Debian 12 on Intel (`amd64`) | Install local `.deb`s; systemd service; setup; client access; upgrade; remove/purge without losing data or preventing MariaDB startup |
+| 3 | Docker in the supplied Debian 13 LXC on Intel Proxmox (`linux/amd64`) | Same image recipe and acceptance as Mac, run on the actual guest; SSH forwarding and volume persistence |
+| 4 | Native Debian on Intel (`amd64`); supplied host is Debian 13 | Install matching local `.deb`s; systemd service; setup; client access; upgrade; remove/purge without losing data or preventing MariaDB startup |
 
 Both MariaDB 10.11 and 11.8 remain required. Native Debian arm64 and Ubuntu
 distribution testing are deferred; arm64 Debian packages are still an internal
@@ -33,6 +33,13 @@ input to Docker on the Mac. Cross-table projections and the M8 feature tickets
 below remain outside this release effort. Homebrew's separate MariaDB keg is a
 runtime dependency of that installation route, not a prerequisite for building
 against the server copies already in this repository.
+
+The supplied Intel target is a Debian 13 Proxmox **LXC**, replacing the originally
+assumed Debian 12 VM for deployment acceptance. Debian 13 provides MariaDB 11.8;
+10.11 has no official trixie repository and remains a Debian 12 Docker deployment
+on this host. Debian 12 packages for both series remain supported by the existing
+recipe and CI matrix; native Debian 12 systemd acceptance is a separate unverified
+environment. Do not install Debian 12 native artifacts into Debian 13.
 
 **Current evidence (2026-10-04):**
 
@@ -71,12 +78,27 @@ against the server copies already in this repository.
   under emulation. Tests assert the increased installed version, active plugin,
   custom config/data preservation, reinstall, removal and purge. This is a
   packaging revision upgrade within ChimeraDB 0.1.0, not a MariaDB server migration.
-- Local `brew install` reached the toolchain prerequisite check and refused the
-  host's stale Command Line Tools (26.3) on macOS 27. Full Xcode 27 is selected,
-  but Apple's updater currently offers no CLT update. Native staged validation
-  and clean-runner Homebrew CI are separate from this host-toolchain blocker.
-- No Proxmox VM or native Debian Intel system has been selected or accessed.
-  Actual VM deployment and Debian systemd acceptance remain pending.
+- The local Homebrew toolchain blocker is resolved. Both formulae now build and
+  pass isolated runtime tests on this Mac against MariaDB 10.11.19 and 11.8.9,
+  including fresh ping, gateways, oplog and restart persistence. The existing
+  11.8 config is unchanged; both kegs remain unlinked and no global service was
+  started. Reinstall can unexpectedly link a previously unlinked formula on this
+  Homebrew version, so `local-test.sh` restores its prior state on exit; seven
+  mocked success/failure cases verify that cleanup preserves the original error.
+- Both Intel Docker images now pass on the supplied Debian 13 Proxmox LXC:
+  full drivers, SQL-triggered change streams, graceful stop, replacement-container
+  persistence and SSH-forwarded SQL/Mongo access from the Mac. Separate persistent
+  Compose deployments are healthy with loopback-published ports. The same updated
+  images pass on Mac arm64, and its preview was refreshed without replacing data.
+- Actual Intel deployment exposed a Docker startup race: `chimeradb status` could
+  report success against the temporary initialization server, which has no SQL TCP
+  listener. The healthcheck now also rejects `.chimera-initializing`; runtime tests
+  inject that marker and execute the image's real probe before driver acceptance.
+- Debian 13/11.8 package builds now use trixie's signed native MariaDB source and
+  exact server dependency, with separate output paths and a dedicated amd64 CI job.
+  Debian source entries preserve the configured signing key, including the newer
+  `.pgp` filename; guessing `.gpg` caused an APT conflict on the new base image.
+  Native systemd acceptance and a package revision upgrade are in progress.
 - The final package CI run succeeded with all eight jobs passing; the
   separate [test workflow](https://github.com/mieweb/chimeraDB/actions/runs/37214387046)
   succeeded at the same code commit. All four CI package sets have been imported
@@ -324,9 +346,10 @@ availability and full-server-build cost assumptions.
   service manager. Missing/inactive plugin and incomplete catalog return failure.
   The Homebrew wrapper identifies its dedicated formula/service. Native Debian
   systemd execution remains part of the deployment acceptance below.
-- [ ] **M9.2.6** Native deployment acceptance on **Debian 12 Intel with systemd**.
+- [ ] **M9.2.6** Native deployment acceptance on the supplied **Debian 13 Intel
+  LXC with systemd**, using native MariaDB 11.8 and matching ChimeraDB artifacts.
   Debian 12 container coverage is complete for its 10.11 packages and MariaDB.org's
-  11.8 packages, on both architectures. Real Intel/systemd deployment has not run.
+  11.8 packages, on both architectures. Native Debian 12 systemd remains unverified.
   Ubuntu and native Debian arm64 remain deferred; arm64 packages support Mac Docker.
 - [x] **M9.2.7** The plugin depends on the **exact** `mariadb-server` package version
   used to obtain its signed APT source; `dpkg-shlibdeps` derives runtime library
@@ -397,7 +420,7 @@ availability and full-server-build cost assumptions.
 - [x] **M9.4.3** The packaged image passes the driver/SQL party trick, raw-SQL change
   stream, oplog, gateway-isolation, graceful-stop and replacement-container
   persistence tests for all four combinations. No source tree is present in the
-  running image. Actual Intel Proxmox VM acceptance remains open under M9.5.2.
+  running image. Both images now also pass on the supplied Intel Proxmox LXC.
 
 ---
 
@@ -412,13 +435,14 @@ Package lifecycle and runtime-driver acceptance therefore have separate scripts.
   wire CRUD, SQL visibility, oplog, a raw-SQL write arriving through a change stream,
   `mongo()` and restart/replacement persistence. These tests use the packaged artifact
   without the development source tree or Linux reference `mongo` shell.
-- [ ] **M9.5.2** Complete deployment acceptance on an actual Intel Proxmox Linux
-  VM and native Debian 12 Intel/systemd. Clean Homebrew formula tests and
+- [ ] **M9.5.2** Complete deployment acceptance on the supplied Intel Proxmox LXC
+  and native Debian 13 Intel/systemd. Clean Homebrew formula tests and
   launchd/lifecycle acceptance pass for both series. The Debian package/image
   matrix {10.11, 11.8} × {amd64, arm64} passes locally and in the final native
   Linux CI run, including the readiness fix; local amd64 used emulation.
-  Actual Proxmox/systemd access is still pending. Ubuntu and native Debian arm64
-  are deferred.
+  Actual Intel Docker acceptance and SSH forwarding now pass for both series;
+  native Debian 13/11.8 systemd acceptance is in progress. Ubuntu and native
+  Debian arm64 are deferred; the originally assumed Debian 12 VM was not supplied.
 - [x] **M9.5.3** **Package revision upgrade acceptance.** Install → upgrade →
   reinstall → remove → purge → MariaDB still starts and preserves data passes
   for all four combinations on native Linux CI runners. Both Intel package

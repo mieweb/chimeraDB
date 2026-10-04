@@ -5,21 +5,31 @@ set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
 series=10.11
+suite=bookworm
 case $(uname -m) in arm64|aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
 packages= previous_packages=
 while (($#)); do
   case $1 in
     --series|--server) series=${2:?missing series}; shift 2 ;;
+    --suite) suite=${2:?missing Debian suite}; shift 2 ;;
     --arch) arch=${2:?missing architecture}; shift 2 ;;
     --packages) packages=${2:?missing package directory}; shift 2 ;;
     --previous-packages) previous_packages=${2:?missing previous package directory}; shift 2 ;;
-    -h|--help) echo 'usage: test.sh --series 10.11|11.8 --arch amd64|arm64 [--packages DIR] [--previous-packages DIR]'; exit 0 ;;
+    -h|--help) echo 'usage: test.sh --series 10.11|11.8 --arch amd64|arm64 [--suite bookworm|trixie] [--packages DIR] [--previous-packages DIR]'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 [[ $series == 10.11 || $series == 11.8 ]]
 [[ $arch == arm64 || $arch == amd64 ]]
-packages=${packages:-$ROOT/chimera/packaging/dist/debian/$series/$arch}
+[[ $suite == bookworm || $suite == trixie ]] || { echo 'suite must be bookworm or trixie' >&2; exit 1; }
+[[ $suite != trixie || $series == 11.8 ]] || {
+  echo 'Debian 13 (trixie) supports MariaDB 11.8; use bookworm for 10.11' >&2; exit 1;
+}
+if [[ -z $packages ]]; then
+  package_root="$ROOT/chimera/packaging/dist/debian"
+  [[ $suite == bookworm ]] || package_root+="-$suite"
+  packages="$package_root/$series/$arch"
+fi
 packages=$(cd "$packages" && pwd)
 test -f "$packages/SHA256SUMS"
 previous_mount=()
@@ -28,9 +38,10 @@ if [[ -n $previous_packages ]]; then
   test -f "$previous_packages/SHA256SUMS"
   previous_mount=(--mount "type=bind,src=$previous_packages,dst=/previous-packages,readonly")
 fi
-tag="chimeradb-package-test:$series-$arch"
+tag="chimeradb-package-test:$suite-$series-$arch"
 docker buildx build --platform "linux/$arch" --load --target repository \
-  --build-arg "SERIES=$series" --file "$HERE/Dockerfile" --tag "$tag" "$ROOT"
+  --build-arg "SERIES=$series" --build-arg "DEBIAN_SUITE=$suite" \
+  --file "$HERE/Dockerfile" --tag "$tag" "$ROOT"
 docker run --rm --platform "linux/$arch" \
   "${previous_mount[@]+"${previous_mount[@]}"}" \
   --mount "type=bind,src=$packages,dst=/packages,readonly" \

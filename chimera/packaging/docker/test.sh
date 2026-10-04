@@ -38,6 +38,17 @@ start() {
   return 1
 }
 start
+# The temporary initialization server also has an active plugin, but cannot
+# accept client TCP connections. The image's actual probe must reject its
+# marker even when the socket/status check would otherwise succeed.
+healthcheck=$(docker inspect --format '{{index .Config.Healthcheck.Test 1}}' "$name")
+docker exec "$name" touch /var/lib/mysql/.chimera-initializing
+if docker exec "$name" sh -c "$healthcheck"; then
+  echo 'Health probe accepted incomplete initialization' >&2
+  exit 1
+fi
+docker exec "$name" rm /var/lib/mysql/.chimera-initializing
+docker exec "$name" sh -c "$healthcheck"
 docker port "$name" 3306/tcp | grep -q '^127\.0\.0\.1:'
 docker port "$name" 27017/tcp | grep -q '^127\.0\.0\.1:'
 docker run --rm --network "$network" -e MARIADB_ROOT_PASSWORD "$runner"

@@ -19,6 +19,6 @@ RUN chmod 755 /usr/local/bin/chimera-entrypoint
 EXPOSE 3306 27017
 VOLUME ["/var/lib/mysql"]
 HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=6 \
-  CMD chimeradb status --protocol=socket --socket=/run/mysqld/mysqld.sock --user=root >/dev/null || exit 1
+  CMD test ! -e /var/lib/mysql/.chimera-initializing && chimeradb status --protocol=socket --socket=/run/mysqld/mysqld.sock --user=root >/dev/null || exit 1
 ENTRYPOINT ["chimera-entrypoint"]
 CMD ["mariadbd"]
