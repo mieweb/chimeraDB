@@ -29,6 +29,11 @@ native Linux package/Docker combinations (10.11/11.8 × arm64/amd64) in the
 See [release-plan.md](release-plan.md) for distribution gates still open. The
 sections below retain the original implementation rationale and completed checklist.
 
+Deployment acceptance also passes on the supplied Intel Proxmox LXC: both Docker
+series and native Debian 13/MariaDB 11.8.6 exercise SQL-triggered change streams
+through real drivers. Both local Homebrew installations now pass their fresh-start
+and persistence tests. The updated nine-job package matrix passes at `d7bd90e`.
+
 ## 1. Why this exists (read this first)
 
 Meteor 3.5 (released 2026-06-30) made **MongoDB change streams the default reactivity

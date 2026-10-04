@@ -61,7 +61,8 @@ done
 ! command -v mariadbd >/dev/null 2>&1 || die 'an existing MariaDB binary is on PATH'
 ! command -v mysqld >/dev/null 2>&1 || die 'an existing MySQL binary is on PATH'
 command -v ss >/dev/null 2>&1 || die 'iproute2 (ss) is required for the preflight port check'
-[[ -z $(ss -H -ltn '( sport = :3306 or sport = :27017 )') ]] ||
+listeners=$(ss -H -ltn '( sport = :3306 or sport = :27017 )') || die 'could not inspect listening TCP ports'
+[[ -z $listeners ]] ||
   die 'TCP 3306 or 27017 is already in use; stop the conflicting test deployment first'
 
 packages=$(cd "$packages" && pwd)

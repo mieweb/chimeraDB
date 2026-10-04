@@ -98,11 +98,16 @@ environment. Do not install Debian 12 native artifacts into Debian 13.
   exact server dependency, with separate output paths and a dedicated amd64 CI job.
   Debian source entries preserve the configured signing key, including the newer
   `.pgp` filename; guessing `.gpg` caused an APT conflict on the new base image.
-  Native systemd acceptance and a package revision upgrade are in progress.
-- The final package CI run succeeded with all eight jobs passing; the
-  separate [test workflow](https://github.com/mieweb/chimeraDB/actions/runs/37214387046)
-  succeeded at the same code commit. All four CI package sets have been imported
-  with verified checksums. All four local images rebuilt from those packages pass
+  Native systemd acceptance passes against `1:11.8.6-0+deb13u1`, including a real
+  `0.1.0-1` → `0.1.0-2` upgrade, real Mongo/SQL drivers, SQL-triggered change
+  streams, restart, edited-config preservation on reinstall, remove/purge and
+  retained data. The final `0.1.0-2` installation is enabled and running.
+  Both revisions also pass the disposable Debian 13 package lifecycle test.
+- The updated [package CI run](https://github.com/mieweb/chimeraDB/actions/runs/37242018652)
+  at `d7bd90e` passes all **nine jobs**, including Debian 13; the separate
+  [test workflow](https://github.com/mieweb/chimeraDB/actions/runs/37242018619)
+  also passes. The original four Debian 12 CI package sets and both locally built
+  Debian 13 revisions have verified checksums. All four updated Docker images pass
   runtime acceptance again; both Intel image archives and the source archive have
   verified checksums. Artifacts are in `chimera/packaging/dist/`. The refreshed Mac
   preview is healthy on SQL `127.0.0.1:13306` and Mongo `127.0.0.1:37017`, with its
@@ -345,11 +350,15 @@ availability and full-server-build cost assumptions.
   readiness/status checks on a systemd installation; it does not create another
   service manager. Missing/inactive plugin and incomplete catalog return failure.
   The Homebrew wrapper identifies its dedicated formula/service. Native Debian
-  systemd execution remains part of the deployment acceptance below.
-- [ ] **M9.2.6** Native deployment acceptance on the supplied **Debian 13 Intel
+  systemd execution is verified on Debian 13 in the acceptance below.
+- [x] **M9.2.6** Native deployment acceptance on the supplied **Debian 13 Intel
   LXC with systemd**, using native MariaDB 11.8 and matching ChimeraDB artifacts.
   Debian 12 container coverage is complete for its 10.11 packages and MariaDB.org's
-  11.8 packages, on both architectures. Native Debian 12 systemd remains unverified.
+  11.8 packages, on both architectures. The new guarded `systemd-test.sh` passes
+  actual service startup, both drivers/gateways, streams, restart, package revision
+  upgrade, config-preserving reinstall and removal/purge without losing data.
+  It leaves MariaDB 11.8.6 and ChimeraDB 0.1.0-2 enabled and running.
+  Native Debian 12 systemd remains unverified.
   Ubuntu and native Debian arm64 remain deferred; arm64 packages support Mac Docker.
 - [x] **M9.2.7** The plugin depends on the **exact** `mariadb-server` package version
   used to obtain its signed APT source; `dpkg-shlibdeps` derives runtime library
@@ -435,18 +444,20 @@ Package lifecycle and runtime-driver acceptance therefore have separate scripts.
   wire CRUD, SQL visibility, oplog, a raw-SQL write arriving through a change stream,
   `mongo()` and restart/replacement persistence. These tests use the packaged artifact
   without the development source tree or Linux reference `mongo` shell.
-- [ ] **M9.5.2** Complete deployment acceptance on the supplied Intel Proxmox LXC
+- [x] **M9.5.2** Complete deployment acceptance on the supplied Intel Proxmox LXC
   and native Debian 13 Intel/systemd. Clean Homebrew formula tests and
   launchd/lifecycle acceptance pass for both series. The Debian package/image
   matrix {10.11, 11.8} × {amd64, arm64} passes locally and in the final native
   Linux CI run, including the readiness fix; local amd64 used emulation.
   Actual Intel Docker acceptance and SSH forwarding now pass for both series;
-  native Debian 13/11.8 systemd acceptance is in progress. Ubuntu and native
+  native Debian 13/11.8 systemd acceptance also passes. Ubuntu and native
   Debian arm64 are deferred; the originally assumed Debian 12 VM was not supplied.
 - [x] **M9.5.3** **Package revision upgrade acceptance.** Install → upgrade →
   reinstall → remove → purge → MariaDB still starts and preserves data passes
   for all four combinations on native Linux CI runners. Both Intel package
   upgrades also pass locally under emulation.
+  Debian 13/11.8 additionally passes this upgrade in both a disposable container
+  and the actual Intel LXC's native systemd service.
   [deb/test.sh](chimera/packaging/deb/test.sh) now accepts `--previous-packages DIR`
   to install the older set, initialize/write/customize, upgrade to the newer set,
   assert a strictly increased installed package version plus active plugin and
@@ -484,6 +495,8 @@ succeeded. Tag-driven publication remains a separate gate.
   revision upgrade, remove/purge and Docker wire/stream/persistence checks.
   Both Homebrew source installs, formula tests, fresh ping, launchd lifecycle,
   stale-keg rejection, real drivers and reinstall/config/data persistence pass.
+  The subsequent `d7bd90e` run passes all nine jobs, adding Debian 13/11.8 amd64
+  installation and package revision upgrade to the matrix.
 - [ ] **M9.6.3** Implement `release.yml`: on tag, publish `.deb`s and corresponding
   source to GitHub Releases, push the Docker manifest, and update the public tap.
   None of these public release steps has run. Plain downloadable packages come
@@ -526,7 +539,8 @@ succeeded. Tag-driven publication remains a separate gate.
 - [x] On clean Debian containers (both arches) and clean macOS CI runners: install,
   `setup`, and run the SQL/Mongo party trick using installed artifacts without a
   development source tree at runtime. Both server series pass; Homebrew also passes
-  its dedicated launchd lifecycle. Actual Proxmox/native Debian systemd remains M9.5.2.
+  its dedicated launchd lifecycle. Actual Intel Proxmox LXC Docker and native
+  Debian 13 systemd acceptance also pass under M9.5.2.
 - [ ] Every install command printed in [README.md](README.md#installation)
   either works verbatim or has been removed. `dnf` is removed unless someone builds it.
 - [ ] Artifacts are produced by CI from a tag, not by a human.

@@ -175,8 +175,11 @@ remain for inspection. Failure also preserves state and prints service/journal
 diagnostics rather than attempting a destructive reset. The purge check removes
 the test conffile customization; the final installation uses package defaults.
 
-The native harness is available; a passing execution on the deployment host has
-not yet been recorded. Container package tests do not establish systemd or LXC
+The native harness passes on the supplied Intel Proxmox LXC running Debian 13,
+using MariaDB `1:11.8.6-0+deb13u1` and ChimeraDB `0.1.0-1` → `0.1.0-2`.
+Both drivers, change streams, systemd restart, upgrade, reinstall and removal/purge
+preserve the test data. Native Debian 12 systemd has not been tested on this host.
+Container package tests alone do not establish systemd or LXC
 deployment acceptance.
 
 MongoDB is a trademark of MongoDB, Inc. MariaDB is a trademark of MariaDB plc.
