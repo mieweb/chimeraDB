@@ -130,9 +130,19 @@ export FAKE_CONNECT=1
 export FAKE_BIND=0.0.0.0
 check_cli 0 'wildcard bind on local SQL socket probes loopback'
 export FAKE_BIND=127.0.0.1 FAKE_CONNECTION='database.example via TCP/IP' FAKE_EXPECT_HOST=database.example
-check_cli 0 'remote SQL connection probes its actual host even with a loopback Mongo bind'
+check_cli 1 'remote SQL TCP requires its Mongo endpoint explicitly'
+[[ ! -s $work/health-calls ]]
+export CHIMERA_MONGO_HOST=database.example
+check_cli 0 'explicit remote endpoint is probed even with a loopback Mongo bind'
+unset CHIMERA_MONGO_HOST
 export FAKE_CONNECTION='127.0.0.1 via TCP/IP'
 check_cli 1 'loopback SQL TCP requires an explicit Mongo endpoint for tunnel safety'
+[[ ! -s $work/health-calls ]]
+export FAKE_CONNECTION='LOCALHOST via TCP/IP'
+check_cli 1 'uppercase localhost cannot bypass explicit TCP endpoint selection'
+[[ ! -s $work/health-calls ]]
+export FAKE_CONNECTION='tunnel.example via TCP/IP'
+check_cli 1 'a hostname alias cannot bypass explicit TCP endpoint selection'
 [[ ! -s $work/health-calls ]]
 export CHIMERA_MONGO_HOST=127.0.0.1 CHIMERA_MONGO_PORT=28000 FAKE_EXPECT_HOST=127.0.0.1 FAKE_EXPECT_PORT=28000
 check_cli 0 'explicit Mongo host and forwarded port override endpoint detection'

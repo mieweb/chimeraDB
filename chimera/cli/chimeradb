@@ -12,8 +12,8 @@
 #   chimeradb setup --socket=/run/mysqld/mysqld.sock --user=root
 #
 # Status requires a successful Mongo ping. For tunnels or a separate endpoint,
-# set CHIMERA_MONGO_HOST and optionally CHIMERA_MONGO_PORT. Loopback SQL TCP is
-# ambiguous with a tunnel and requires CHIMERA_MONGO_HOST; UNIX sockets do not.
+# set CHIMERA_MONGO_HOST and optionally CHIMERA_MONGO_PORT. SQL TCP connections
+# require CHIMERA_MONGO_HOST because the host may name a tunnel; UNIX sockets do not.
 #
 # Deliberately not a package maintainer script. postinst cannot load SQL into a
 # server that may not be running, may be remote, or may need credentials; it
@@ -58,12 +58,10 @@ probe_mongo() {
     case "$connection" in
       *' via UNIX socket') host=$bind; [[ $host != 0.0.0.0 ]] || host=127.0.0.1 ;;
       *' via TCP/IP')
-        host=${connection% via TCP/IP}
-        case "$host" in
-          localhost|127.*|::1|'[::1]')
-            printf 'loopback SQL TCP may be a tunnel; set CHIMERA_MONGO_HOST (and CHIMERA_MONGO_PORT if forwarded)\n'
-            return 1 ;;
-        esac
+        # A hostname can resolve to a local forwarder under any spelling. SQL
+        # transport alone cannot identify the matching Mongo endpoint.
+        printf 'SQL TCP requires CHIMERA_MONGO_HOST (and CHIMERA_MONGO_PORT if forwarded)\n'
+        return 1
         ;;
       *) printf 'cannot determine SQL transport; set CHIMERA_MONGO_HOST\n'; return 1 ;;
     esac
@@ -75,7 +73,7 @@ probe_mongo() {
   for probe in "${probes[@]}"; do
     if [[ -x $probe ]]; then "$probe" "$host" "$port"; return; fi
   done
-  printf 'chimeradb-health is missing; reinstall the matching ChimeraDB plugin package\n'
+  printf 'chimeradb-health is missing; reinstall the ChimeraDB administration package (chimeradb-common on Debian)\n'
   return 1
 }
 

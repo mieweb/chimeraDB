@@ -45,7 +45,7 @@ verify() { "$HERE/verify-packages.sh" "$1" 11.8 amd64 'Debian 12 (bookworm)' "${
 base="$work/base"
 mkdir "$base"
 make_package "$base" chimeradb all
-make_package "$base" chimeradb-common all
+make_package "$base" chimeradb-common amd64
 make_package "$base" chimeradb-plugin-11.8 amd64 0.1.0-1 'mariadb-server (= 1:11.8.9+maria~deb12)'
 cat >"$base/build-info.txt" <<'EOF'
 ChimeraDB: 0.1.0-1
@@ -75,11 +75,11 @@ make_package "$work/foreign" unrelated-package all
 manifest "$work/foreign"
 reject 'checksummed foreign package' verify "$work/foreign"
 cp -R "$base" "$work/duplicate"
-cp "$work/duplicate/chimeradb-common_0.1.0-1_all.deb" "$work/duplicate/duplicate.deb"
+cp "$work/duplicate/chimeradb-common_0.1.0-1_amd64.deb" "$work/duplicate/duplicate.deb"
 manifest "$work/duplicate"
 reject 'duplicate package identity under another filename' verify "$work/duplicate"
 cp -R "$work/debug" "$work/missing"
-rm "$work/missing/chimeradb-common_0.1.0-1_all.deb"
+rm "$work/missing/chimeradb-common_0.1.0-1_amd64.deb"
 manifest "$work/missing"
 reject 'missing runtime package with debug artifact present' verify "$work/missing"
 cp -R "$base" "$work/arch"
@@ -87,9 +87,24 @@ rm "$work/arch/chimeradb-plugin-11.8_0.1.0-1_amd64.deb"
 make_package "$work/arch" chimeradb-plugin-11.8 arm64 0.1.0-1 'mariadb-server (= 1:11.8.9+maria~deb12)'
 manifest "$work/arch"
 reject 'wrong plugin architecture' verify "$work/arch"
+for common_arch in all arm64; do
+  cp -R "$base" "$work/common-$common_arch"
+  rm "$work/common-$common_arch/chimeradb-common_0.1.0-1_amd64.deb"
+  make_package "$work/common-$common_arch" chimeradb-common "$common_arch"
+  manifest "$work/common-$common_arch"
+  reject "wrong common architecture $common_arch" verify "$work/common-$common_arch"
+done
+[[ $(verify "$work/common-all" --allow-legacy-common-all) == 0.1.0-1 ]]
+pass 'explicit previous-release flag permits architecture-independent common'
+legacy_runtime=$(verify "$work/common-all" --allow-legacy-common-all --runtime-files)
+[[ $(printf '%s\n' "$legacy_runtime" | wc -l) == 3 && $legacy_runtime == *chimeradb-common_0.1.0-1_all.deb* ]]
+pass 'legacy flag retains the exact three-runtime-file selection'
+reject 'wrong common CPU architecture even with legacy flag' verify "$work/common-arm64" --allow-legacy-common-all
+reject 'unlisted package even with legacy flag' verify "$work/unlisted" --allow-legacy-common-all
+reject 'duplicate identity even with legacy flag' verify "$work/duplicate" --allow-legacy-common-all
 cp -R "$base" "$work/version"
-rm "$work/version/chimeradb-common_0.1.0-1_all.deb"
-make_package "$work/version" chimeradb-common all 0.1.0-2
+rm "$work/version/chimeradb-common_0.1.0-1_amd64.deb"
+make_package "$work/version" chimeradb-common amd64 0.1.0-2
 manifest "$work/version"
 reject 'mixed package versions' verify "$work/version"
 cp -R "$base" "$work/server"
@@ -123,10 +138,21 @@ expected_arguments=$(printf '%s\n' -y install --no-install-recommends --reinstal
 [[ $(cat "$work/native-apt-arguments") == "$expected_arguments" ]]
 pass 'native installation delegates validation and installs exactly three runtime packages'
 rm "$work/native-apt-arguments"
+reject 'native current input cannot opt into legacy common automatically' install_packages "$work/common-all"
+[[ ! -e $work/native-apt-arguments ]]
+previous="$work/common-all"
+install_packages "$previous"
+[[ $(cat "$work/native-apt-arguments") == "$(printf '%s\n' -y install --no-install-recommends "$legacy_runtime")" ]]
+pass 'native previous-package install explicitly permits legacy common'
+rm "$work/native-apt-arguments"
+previous="$work/common-arm64"
+reject 'native previous-package install still rejects wrong common CPU' install_packages "$previous"
+[[ ! -e $work/native-apt-arguments ]]
+unset previous
 
 cp -R "$base" "$work/symlink"
-rm "$work/symlink/chimeradb-common_0.1.0-1_all.deb"
-ln -s "$base/chimeradb-common_0.1.0-1_all.deb" "$work/symlink/chimeradb-common_0.1.0-1_all.deb"
+rm "$work/symlink/chimeradb-common_0.1.0-1_amd64.deb"
+ln -s "$base/chimeradb-common_0.1.0-1_amd64.deb" "$work/symlink/chimeradb-common_0.1.0-1_amd64.deb"
 manifest "$work/symlink"
 cp -R "$work/debug" "$work/duplicate-debug"
 cp "$work/duplicate-debug/"*dbgsym*.deb "$work/duplicate-debug/another-debug.deb"

@@ -8,12 +8,15 @@ Rules-Requires-Root: no
 Homepage: https://github.com/mieweb/chimeraDB
 
 Package: chimeradb-common
-Architecture: all
-Depends: ${misc:Depends}, bash, mariadb-client
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}, bash, mariadb-client
+Replaces: chimeradb-plugin-10.11, chimeradb-plugin-11.8
 Description: Mongo-compatible access to MariaDB - administration and SQL assets
  ChimeraDB adds a Mongo wire listener and bidirectional document/SQL access to
  MariaDB. This package provides chimeradb setup, status and start, plus the
- catalog SQL and manual. The Mongo listener has no authentication; packaged
+ catalog SQL, compiled Mongo health probe and manual. This administration
+ package can connect to a remote server without a local plugin or server.
+ The Mongo listener has no authentication; packaged
  installations bind it to 127.0.0.1 only.
  .
  MongoDB is a trademark of MongoDB, Inc. MariaDB is a trademark of MariaDB plc.

@@ -7,14 +7,14 @@ export DEBIAN_FRONTEND=noninteractive
 . /etc/os-release
 die() { printf 'package test: %s\n' "$*" >&2; exit 1; }
 package_version() {
-  chimera-verify-packages "$1" "$SERIES" "$ARCH" "Debian $VERSION_ID ($VERSION_CODENAME)"
+  chimera-verify-packages "$1" "$SERIES" "$ARCH" "Debian $VERSION_ID ($VERSION_CODENAME)" "${@:2}"
 }
 cd /packages
 current_version=$(package_version /packages)
 initial_packages=/packages
 previous_version=
 if [[ -d /previous-packages ]]; then
-  previous_version=$(package_version /previous-packages)
+  previous_version=$(package_version /previous-packages --allow-legacy-common-all)
   dpkg --compare-versions "$current_version" gt "$previous_version" ||
     die "current version $current_version must be newer than previous version $previous_version"
   initial_packages=/previous-packages

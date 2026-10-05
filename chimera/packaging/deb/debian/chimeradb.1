@@ -28,11 +28,11 @@ chimeradb status --socket=/run/mysqld/mysqld.sock --user=root
 .fi
 .SH MONGO ENDPOINT
 For a local SQL UNIX socket, status probes the configured Mongo bind and port
-(using 127.0.0.1 for a wildcard bind). For non-loopback SQL TCP, it probes the
-SQL connection host and configured Mongo port. Set CHIMERA_MONGO_HOST and,
-optionally, CHIMERA_MONGO_PORT for forwarded or separate Mongo endpoints.
-Loopback SQL TCP may be an SSH tunnel and requires an explicit CHIMERA_MONGO_HOST;
-status refuses to guess a local Mongo endpoint in that case.
+(using 127.0.0.1 for a wildcard bind). All SQL TCP connections require an
+explicit CHIMERA_MONGO_HOST: hostnames and aliases may refer to tunnels, so
+status does not infer the Mongo endpoint from the SQL host. Set
+CHIMERA_MONGO_PORT too when its port differs from the server's configured Mongo
+port, as with a forwarded or separate endpoint.
 .SH SECURITY
 The Mongo listener has no authentication and defaults to 127.0.0.1:27017.
 Do not make this endpoint publicly reachable.

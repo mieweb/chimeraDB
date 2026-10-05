@@ -70,7 +70,11 @@ not interchangeable with another. This project does not
 yet provide a public APT repository; `apt install chimeradb` alone will not find
 these local packages.
 
-`chimeradb-common` contains the CLI, `catalog.sql` and its manual.
+`chimeradb-common` contains the CLI, compiled Mongo health probe, `catalog.sql`
+and its manual. It is architecture-specific and can administer a remote server
+without installing the local plugin or MariaDB server. For SQL TCP connections,
+set `CHIMERA_MONGO_HOST` explicitly and optionally `CHIMERA_MONGO_PORT` for a
+forwarded or separate Mongo endpoint; SQL hostnames may themselves name tunnels.
 `chimeradb-plugin-10.11` and `chimeradb-plugin-11.8` cannot coexist: they share
 one plugin path. Both provide `chimeradb-plugin`, which the `chimeradb`
 metapackage requires. The plugin package depends on the **exact MariaDB package

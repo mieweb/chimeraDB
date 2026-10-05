@@ -75,7 +75,7 @@ server_version=$(sed -n 's/^MariaDB package: //p' "$packages/build-info.txt")
 initial_packages=$packages
 initial_version=$current_version
 if [[ -n $previous ]]; then
-  initial_version=$(validate_packages "$previous")
+  initial_version=$(validate_packages "$previous" --allow-legacy-common-all)
   dpkg --compare-versions "$current_version" gt "$initial_version" ||
     die 'current packages must be newer than --previous-packages'
   [[ $(sed -n 's/^MariaDB package: //p' "$previous/build-info.txt") == "$server_version" ]] ||
@@ -98,10 +98,14 @@ apt_options=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-co
 install_packages() {
   local directory=$1 files file
   local runtime_files=()
+  local validation_options=(--runtime-files)
   shift
   # Revalidate immediately before installation and select only the three
   # runtime packages. Debug artifacts are verified but never installed.
-  files=$(validate_packages "$directory" --runtime-files) || return
+  if [[ -n ${previous:-} && $directory == "$previous" ]]; then
+    validation_options+=(--allow-legacy-common-all)
+  fi
+  files=$(validate_packages "$directory" "${validation_options[@]}") || return
   while IFS= read -r file; do runtime_files+=("$file"); done <<<"$files"
   apt-get "${apt_options[@]}" install --no-install-recommends "$@" "${runtime_files[@]}"
 }

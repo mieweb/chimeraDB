@@ -3,10 +3,23 @@
 # either its version or exactly the three runtime package paths, one per line.
 set -euo pipefail
 die() { printf 'package validation: %s\n' "$*" >&2; exit 1; }
-[[ $# == 4 || ( $# == 5 && $5 == --runtime-files ) ]] ||
-  die 'usage: verify-packages.sh DIRECTORY SERIES ARCH "Debian VERSION (CODENAME)" [--runtime-files]'
+[[ $# -ge 4 ]] ||
+  die 'usage: verify-packages.sh DIRECTORY SERIES ARCH "Debian VERSION (CODENAME)" [--runtime-files] [--allow-legacy-common-all]'
 directory=$(cd "$1" && pwd)
 series=$2 arch=$3 distribution=$4
+shift 4
+runtime=false
+legacy_common_all=false
+while (($#)); do
+  case $1 in
+    --runtime-files) $runtime && die 'duplicate --runtime-files'; runtime=true ;;
+    --allow-legacy-common-all)
+      $legacy_common_all && die 'duplicate --allow-legacy-common-all'
+      legacy_common_all=true ;;
+    *) die "unknown option: $1" ;;
+  esac
+  shift
+done
 [[ $series == 10.11 || $series == 11.8 ]] || die 'unsupported MariaDB series'
 [[ $arch == amd64 || $arch == arm64 ]] || die 'unsupported architecture'
 [[ -f $directory/SHA256SUMS && -f $directory/build-info.txt ]] || die 'missing checksums/build metadata'
@@ -41,7 +54,12 @@ for file in "${files[@]}"; do
     chimeradb)
       meta=$((meta + 1)); [[ $package_arch == all ]] || die "wrong metapackage architecture: $file" ;;
     chimeradb-common)
-      common=$((common + 1)); [[ $package_arch == all ]] || die "wrong common package architecture: $file" ;;
+      common=$((common + 1))
+      # Only explicitly selected previous releases may predate the compiled
+      # health helper's move into the architecture-specific common package.
+      [[ $package_arch == "$arch" || ( $legacy_common_all == true && $package_arch == all ) ]] ||
+        die "wrong common package architecture: $file"
+      ;;
     "chimeradb-plugin-$series")
       plugin=$((plugin + 1)); [[ $package_arch == "$arch" ]] || die "wrong plugin architecture: $file"
       dependencies=$(dpkg-deb -f "$file" Depends)
@@ -56,7 +74,7 @@ for file in "${files[@]}"; do
   runtime_files+=("$file")
 done
 [[ $meta == 1 && $common == 1 && $plugin == 1 && $debug -le 1 ]] || die 'missing or duplicate package identity'
-if [[ ${5:-} == --runtime-files ]]; then
+if $runtime; then
   printf '%s\n' "${runtime_files[@]}"
 else
   printf '%s\n' "$version"

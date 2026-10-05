@@ -50,8 +50,13 @@ environment. Do not install Debian 12 native artifacts into Debian 13.
   holds that lock, and the previous plugin fails this negative control.
   `chimeradb status` and Docker health now require a valid Mongo ping with a
   two-second deadline, using a compiled helper included in both package routes.
+  Debian's architecture-specific `chimeradb-common` includes that helper and its
+  library dependencies, so remote administration does not require a local server.
+  SQL TCP connections require an explicit Mongo endpoint, including hostname
+  aliases for SSH tunnels. All **45 package/keyring input checks** pass; only
+  explicitly selected previous releases may use the former common `all` layout.
   **17 real TCP/CLI cases**, a deterministic two-case address-fallback fixture and
-  **18 CLI regressions** pass. Twelve committed Homebrew packaging tests cover
+  **21 CLI regressions** pass. Twelve committed Homebrew packaging tests cover
   reinstall cleanup/exit status and deriving the formula version from the
   checksummed source archive, even when the checkout is at a different version.
   These regressions run in CI. Local evidence is in
@@ -375,7 +380,7 @@ availability and full-server-build cost assumptions.
   | Package | Arch | Contents |
   |---|---|---|
   | `chimeradb-plugin-10.11` / `chimeradb-plugin-11.8` | any | `chimera_mongo.so` in `/usr/lib/mysql/plugin/` and the config drop-in |
-  | `chimeradb-common` | all | `catalog.sql` in `/usr/share/chimeradb/sql/`, the CLI and man page |
+  | `chimeradb-common` | any | `catalog.sql` in `/usr/share/chimeradb/sql/`, the CLI, compiled Mongo ping helper and man page |
   | `chimeradb` | all | Metapackage requiring common and the versioned virtual `chimeradb-plugin` provided by either series package |
 
   The two plugin packages conflict because they own the same module path.
