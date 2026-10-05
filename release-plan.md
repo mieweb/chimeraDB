@@ -56,9 +56,13 @@ environment. Do not install Debian 12 native artifacts into Debian 13.
   aliases for SSH tunnels. All **45 package/keyring input checks** pass; only
   explicitly selected previous releases may use the former common `all` layout.
   **17 real TCP/CLI cases**, a deterministic two-case address-fallback fixture and
-  **21 CLI regressions** pass. Twelve committed Homebrew packaging tests cover
+  **21 CLI regressions** pass. Eighteen committed Homebrew packaging tests cover
   reinstall cleanup/exit status and deriving the formula version from the
   checksummed source archive, even when the checkout is at a different version.
+  Keg staging also refreshes its source/build cache when that archive changes;
+  failed fetches, extraction or version validation preserve the previous cache.
+  Patch-upgrade and changed-checksum regressions fail against the old staging
+  script, and successful retries preserve the documented staging paths.
   These regressions run in CI. Local evidence is in
   `chimera/.run/review-pr8/native-summary-10.11.log`,
   `native-summary-11.8.log`, `pruner-scan-negative.log`, `health-tests.log`,
@@ -82,7 +86,7 @@ environment. Do not install Debian 12 native artifacts into Debian 13.
 - Repository trust now installs only the pinned MariaDB primary certificate,
   extracted from the upstream multi-key bundle and verified before APT sees it.
   Complete package-manifest equality and runtime package identities are checked
-  before installation; debug symbols stay out of runtime image layers. All **35
+  before installation; debug symbols stay out of runtime image layers. The initial **35
   real GPG/Debian-archive regressions** pass, both arm64 runtime variants pass
   driver/persistence acceptance, and the updated 11.8 Debian lifecycle passes.
   The native systemd harness delegates to the same package validator, rechecks
