@@ -22,8 +22,10 @@ extern const char kOplogCollection[];
 // collection table.
 bool is_oplog_namespace(const Namespace& ns);
 
-// Creates the oplog table, its clock, and the procedure the per-collection
-// triggers call. Idempotent.
+// Creates the oplog, clock, durable pruning history, and trigger procedures.
+// Idempotent. Uses its own session so DDL cannot commit the caller's transaction;
+// once initialized the readiness check does no DDL and takes no writer locks.
+// A caller transaction must end before first-time initialization or migration.
 void install_oplog_schema(SqlSession& sql);
 
 // Mirrors one collection table into the oplog. Triggers are the *only* writer,
@@ -48,7 +50,9 @@ OplogBatch read_oplog(SqlSession& sql, const bson_t* filter, uint64_t after_seq,
 uint64_t oplog_head(SqlSession& sql);
 
 // Capped-collection emulation: trims by age and by row count, whichever bites
-// first; either limit is off when zero. Returns the number of rows removed.
+// first; either limit is off when zero. Deletes and advances durable history in
+// one transaction. Requires a session without a caller transaction in progress.
+// Returns the number of rows removed.
 uint64_t prune_oplog(SqlSession& sql, uint64_t max_rows, uint64_t max_age_seconds);
 
 // Parks until a write is signalled or `timeout_ms` elapses. Returns true when a

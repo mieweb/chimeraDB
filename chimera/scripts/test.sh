@@ -40,6 +40,7 @@ note "=== oplog, change streams and projections on $SERVER_VERSION ==="
 "$CHIMERA_DIR/scripts/demo-oplog.sh" --server "$SERVER_VERSION"
 "$CHIMERA_DIR/scripts/demo-changestream.sh" --server "$SERVER_VERSION"
 "$CHIMERA_DIR/scripts/test-changestream-regressions.sh" --server "$SERVER_VERSION"
+"$CHIMERA_DIR/scripts/test-changestream-rollback.sh" --server "$SERVER_VERSION"
 "$CHIMERA_DIR/scripts/demo-projection.sh" --server "$SERVER_VERSION"
 
 # Each client speaking the other's language, and a write from the SQL side

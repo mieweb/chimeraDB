@@ -137,6 +137,10 @@ uint64_t SqlSession::affected_rows() const {
   return static_cast<uint64_t>(mysql_affected_rows(as_mysql(handle_)));
 }
 
+bool SqlSession::in_transaction() const {
+  return (as_mysql(handle_)->server_status & SERVER_STATUS_IN_TRANS) != 0;
+}
+
 std::string SqlSession::quote(std::string_view text) const {
   return quote_binary(reinterpret_cast<const uint8_t*>(text.data()), text.size());
 }

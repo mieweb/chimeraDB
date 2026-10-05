@@ -24,12 +24,9 @@ OplogBatch read_changestream(SqlSession& sql, const Namespace& ns, uint64_t afte
 
 // Turns the parsed start options into the sequence to read strictly after.
 // `startAtOperationTime` is inclusive of events *at* that time, so it resolves to
-// the last sequence strictly before it, or oldest.seq - 1 at the retained edge.
-// Times older than a pruned edge are refused; an empty oplog starts at zero.
+// the last retained sequence strictly before it, or the durable history floor.
+// Times at/before a deleted event are refused; rollback gaps never imply loss.
 uint64_t resolve_change_stream_start(SqlSession& sql, const ChangeStreamOptions& opts);
-
-// The oldest sequence still retained, or 0 when the oplog has never held a row.
-uint64_t oplog_min_seq(SqlSession& sql);
 
 // Throws ChangeStreamHistoryLost when `after_seq` names a point the pruner has
 // already discarded, so a resuming client is told to resync rather than handed a

@@ -9,6 +9,21 @@
 The release pass checks retention after every stream read, including reads after
 parking and cursors opened on an empty oplog. NULL event rendering now fails
 explicitly, and database-wide watches return the documented unsupported error.
+PR #8 additionally replaces sequence-gap inference with durable deletion records:
+rolled-back trigger inserts may consume sequence numbers without losing history.
+Pruning records the actual removed sequence/time atomically, and row limits count
+committed rows. A separate conservative migration boundary preserves access to
+retained legacy events when earlier pruning cannot be reconstructed. Legacy setup
+refuses an active caller transaction with a commit-or-rollback retry message,
+avoiding a wait on that caller's own locks without committing its transaction.
+This follow-up passes **115 unit cases**, both full native suites and all nine
+differential specs per series. The isolated
+[rollback regression](chimera/scripts/test-changestream-rollback.sh) covers
+initial/interior gaps, real and no-op pruning, restart persistence, legacy
+migration and transaction preservation; the previous plugin fails its initial-gap
+negative control. Evidence is in `chimera/.run/review-pr8/native-watermark-10.11.log`
+and `native-watermark-11.8.log`.
+
 The full native suite passes on both server series at code commit `5f78542`:
 **93 unit cases**, the parked-prune
 regression in [test-changestream-regressions.sh](chimera/scripts/test-changestream-regressions.sh),
@@ -246,15 +261,22 @@ reach it. Model the tests on [test_oplog.cpp](chimera/tests/unit/test_oplog.cpp)
 - [x] **CS3.2** Reply shape: `nextBatch` of events, `cursor.id` unchanged,
   `cursor.postBatchResumeToken` = token of the post-batch `after_seq`, top-level
   `operationTime`. This is what lets the driver resume correctly across quiet periods.
-- [x] **CS3.3** History-lost: on open (CS2.3) *and* on every `getMore`, if
-  `after_seq + 1 < MIN(seq)` in `chimera_meta.oplog` → error
-  `{ok: 0, code: 286, codeName: "ChangeStreamHistoryLost", errmsg: …}`. Meteor is built
-  to recover from exactly this (drops token, resyncs). Never silently skip the gap.
+- [x] **CS3.3** History-lost: on open (CS2.3) and after every event read, compare
+  the resume sequence with the durable pruning watermark. A sequence below the
+  highest actually deleted sequence returns
+  `{ok: 0, code: 286, codeName: "ChangeStreamHistoryLost", errmsg: …}`; equality is
+  safe for resume-after. An inclusive operation-time start at or before the
+  greatest deleted timestamp also returns 286. Rollback can consume
+  `AUTO_INCREMENT` values without losing an event, so `MIN(seq)` and sequence
+  gaps cannot establish that pruning occurred. Meteor handles 286 by resyncing.
 - [x] **CS3.4** Make the 286 rule airtight against pruning: [`prune_oplog`](chimera/plugin/chimera_mongo/oplog.cc)
-  must always leave **at least the newest row** (both the row-count and the age branch),
-  so `MIN(seq)` exists whenever anything was ever written and the CS3.3 predicate is
-  decidable. An empty-since-birth oplog receiving any token is also 286 (a token cannot
-  legitimately exist). Extend the pruner knob docs accordingly.
+  records the highest sequence and timestamp actually removed in the same
+  transaction as deletion. No-op pruning leaves that state unchanged. Both limits
+  still leave **at least the newest row**, and the row limit counts retained rows
+  rather than sequence distance. Fresh databases begin with no recorded loss.
+  Legacy databases without pruning records retain an explicit conservative
+  boundary for uncertain earlier history while allowing access to retained events;
+  that migration boundary is separate from the record of actual deletions.
 - [x] **CS3.5** `killCursors` already kills tail cursors via the registry — add a spec
   assertion, don't assume. Asserted twice: in the differential spec, where both servers
   agree the following `getMore` is `CursorNotFound`, and in demo-changestream.sh.

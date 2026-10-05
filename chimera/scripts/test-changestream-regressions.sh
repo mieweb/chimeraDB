@@ -120,21 +120,31 @@ fi
 watch_pid=""
 cat "$watch_out"
 
-# Retain only the newest marker for a stable time boundary. Even a pruner pass
-# already in flight cannot delete the newest row, so this does not depend on
-# sleeping until the background thread has noticed max_rows=0.
-# MIN(seq)>1 is intentional; seq-1 cold starts are covered by storage unit tests.
-chimera_sql -e 'SET GLOBAL chimera_mongo_oplog_max_rows = 0;
-  DELETE FROM chimera_meta.oplog WHERE seq <
-    (SELECT newest FROM (SELECT MAX(seq) AS newest FROM chimera_meta.oplog) AS retained)'
+# Use the real pruner so the retained edge and durable deletion watermark
+# describe the same transaction. A sequence gap by itself proves nothing.
+chimera_sql -e 'SET GLOBAL chimera_mongo_oplog_max_rows = 1'
+pruned=false
+for _ in $(seq 1 200); do
+  if [[ $(sql_scalar 'SELECT COUNT(*) FROM chimera_meta.oplog') == 1 ]]; then
+    pruned=true
+    break
+  fi
+  sleep 0.1
+done
+$pruned || die "background pruner did not retain only the newest marker within 20 seconds"
 edge=$(sql_scalar "SELECT CONCAT(seq, ' ', ts_t, ' ', ts_i, ' ', ns)
                    FROM chimera_meta.oplog ORDER BY seq LIMIT 1")
 read -r edge_seq edge_t edge_i edge_ns <<<"$edge"
 [[ $edge_seq -gt 1 && $edge_ns == csregression.* ]] || die "unexpected retained edge: $edge"
 edge_coll=${edge_ns#csregression.}
+deleted=$(sql_scalar 'SELECT CONCAT(pruned_seq, " ", pruned_ts_t, " ", pruned_ts_i)
+                     FROM chimera_meta.oplog_history WHERE id=1')
+read -r deleted_seq deleted_t deleted_i <<<"$deleted"
+[[ $deleted_seq -gt 0 && $deleted_seq -lt $edge_seq ]] || die "unexpected deletion watermark: $deleted"
 "$REFERENCE_MONGO" --quiet --port "$MONGO_PORT" --eval \
   "var d = db.getSiblingDB('csregression'), EDGE_COLL = '$edge_coll',
-       EDGE_SEQ = $edge_seq, EDGE_T = $edge_t, EDGE_I = $edge_i;"'
+       EDGE_SEQ = $edge_seq, EDGE_T = $edge_t, EDGE_I = $edge_i,
+       DELETED_T = $deleted_t, DELETED_I = $deleted_i;"'
   var start = Timestamp(EDGE_T, EDGE_I);
   var s = d.runCommand({aggregate: EDGE_COLL,
                         pipeline: [{$changeStream: {startAtOperationTime: start}}], cursor: {}});
@@ -146,10 +156,9 @@ edge_coll=${edge_ns#csregression.}
   while (expected.length < 16) expected = "0" + expected;
   assert.eq(expected, r.cursor.nextBatch[0]._id._data, tojson(r));
   d.runCommand({killCursors: EDGE_COLL, cursors: [s.cursor.id]});
-  var older = EDGE_I > 0 ? Timestamp(EDGE_T, EDGE_I - 1) : Timestamp(EDGE_T - 1, 4294967295);
   var lost = d.runCommand({aggregate: EDGE_COLL,
-                           pipeline: [{$changeStream: {startAtOperationTime: older}}], cursor: {}});
+                           pipeline: [{$changeStream: {startAtOperationTime: Timestamp(DELETED_T, DELETED_I)}}], cursor: {}});
   assert.eq(286, lost.code, tojson(lost));
-  print("  ok  retained-edge operation time replays its event; older time reports 286");
+  print("  ok  retained-edge time replays its event; actually deleted time reports 286");
 '
 note "change-stream review regressions passed on $SERVER_VERSION"

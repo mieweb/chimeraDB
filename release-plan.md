@@ -43,7 +43,17 @@ environment. Do not install Debian 12 native artifacts into Debian 13.
 
 **Current evidence (2026-10-04):**
 
-- PR #8 review fixes pass **99 unit cases and the full native development suite
+- The follow-up rollback-gap review passes **115 unit cases and both full native
+  suites**, with all nine differential specs per series. History loss now uses
+  durable records of actual deletions, committed atomically with pruning; row
+  limits count committed events. An isolated live fixture verifies initial and
+  interior trigger rollbacks, head/resume-zero/early-time streams, no-op and real
+  pruning, restart persistence and conservative legacy migration. Migration
+  refuses an active caller transaction promptly and preserves its rollback.
+  The previous plugin fails the initial rollback-gap negative control. Evidence:
+  `chimera/.run/review-pr8/native-watermark-10.11.log`,
+  `native-watermark-11.8.log` and `rollback-negative-control.log`.
+- The initial PR #8 review fixes at `f6659a3` pass **99 unit cases and the full native development suite
   on both MariaDB series**, including all nine differential specs. A stream opened
   at the oldest retained event's timestamp now replays that event; older pruned
   timestamps still report 286. The pruning regression waits for completed event
