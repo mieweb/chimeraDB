@@ -42,6 +42,12 @@ tag="chimeradb-package-test:$suite-$series-$arch"
 docker buildx build --platform "linux/$arch" --load --target repository \
   --build-arg "SERIES=$series" --build-arg "DEBIAN_SUITE=$suite" \
   --file "$HERE/Dockerfile" --tag "$tag" "$ROOT"
+# A separate fresh container proves remote administration needs no local server
+# and cannot preinstall the current common package before the upgrade fixture.
+docker run --rm --platform "linux/$arch" \
+  --mount "type=bind,src=$packages,dst=/packages,readonly" \
+  --mount "type=bind,src=$HERE/test-common-inside.sh,dst=/test.sh,readonly" \
+  --env "SERIES=$series" --env "ARCH=$arch" "$tag" bash /test.sh
 docker run --rm --platform "linux/$arch" \
   "${previous_mount[@]+"${previous_mount[@]}"}" \
   --mount "type=bind,src=$packages,dst=/packages,readonly" \

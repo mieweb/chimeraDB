@@ -12,8 +12,8 @@ Debian 12 (`--suite bookworm`, the default) supports both series;
 Debian 13 (`--suite trixie`) supports 11.8 from Debian's signed native repository.
 `--arch arm64` supports the Docker image on Apple Silicon; `--arch both` builds
 both outputs. Native Debian Intel is the package deployment target.
-Other Debian releases and Ubuntu are not claimed by these recipes. The existing
-shipping Docker images continue to use Debian 12.
+Other Debian releases and Ubuntu are not claimed by these recipes. The Docker
+runtime recipe uses Debian 12; no release image has been published yet.
 
 For a Debian 13 Intel host, build and test separately from the Debian 12 artifacts:
 
