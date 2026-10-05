@@ -7,41 +7,13 @@ export DEBIAN_FRONTEND=noninteractive
 . /etc/os-release
 die() { printf 'package test: %s\n' "$*" >&2; exit 1; }
 package_version() {
-  local directory=$1 plugin file package architecture version
-  [[ -f $directory/build-info.txt ]] || die "missing build-info.txt in $directory"
-  grep -Fxq "Distribution: Debian $VERSION_ID ($VERSION_CODENAME)" "$directory/build-info.txt" ||
-    die "packages in $directory were not built for Debian $VERSION_ID ($VERSION_CODENAME)"
-  local plugins=("$directory/chimeradb-plugin-${SERIES}_"*.deb)
-  [[ ${#plugins[@]} == 1 && -f ${plugins[0]} ]] ||
-    die "expected exactly one plugin package for series $SERIES in $directory"
-  plugin=${plugins[0]}
-  version=$(dpkg-deb -f "$plugin" Version)
-  # Validate every input before apt changes anything. Both sets must have the
-  # requested series/architecture and a consistent package version.
-  for file in "$directory"/*.deb; do
-    package=$(dpkg-deb -f "$file" Package)
-    architecture=$(dpkg-deb -f "$file" Architecture)
-    case "$package" in
-      chimeradb|chimeradb-common)
-        [[ $architecture == all ]] || die "unexpected architecture in $file"
-        ;;
-      "chimeradb-plugin-$SERIES"|"chimeradb-plugin-$SERIES-dbgsym")
-        [[ $architecture == "$ARCH" ]] || die "expected $ARCH package: $file"
-        ;;
-      *) die "unexpected package $package in $directory" ;;
-    esac
-    [[ $(dpkg-deb -f "$file" Version) == "$version" ]] ||
-      die "mixed package versions in $directory"
-  done
-  printf '%s\n' "$version"
+  chimera-verify-packages "$1" "$SERIES" "$ARCH" "Debian $VERSION_ID ($VERSION_CODENAME)"
 }
 cd /packages
-sha256sum --check SHA256SUMS
 current_version=$(package_version /packages)
 initial_packages=/packages
 previous_version=
 if [[ -d /previous-packages ]]; then
-  (cd /previous-packages && sha256sum --check SHA256SUMS)
   previous_version=$(package_version /previous-packages)
   dpkg --compare-versions "$current_version" gt "$previous_version" ||
     die "current version $current_version must be newer than previous version $previous_version"

@@ -38,10 +38,11 @@ package_version=$(sed -n 's/^ChimeraDB: //p' "$packages/build-info.txt")
 context=$(mktemp -d "${TMPDIR:-/tmp}/chimera-image.XXXXXX")
 trap 'rm -rf "$context"' EXIT
 mkdir "$context/packages"
-cp "$packages/"*.deb "$packages/SHA256SUMS" "$context/packages/"
+cp "$packages/"*.deb "$packages/SHA256SUMS" "$packages/build-info.txt" "$context/packages/"
 cp "$HERE/runtime.Dockerfile" "$context/Dockerfile"
 cp "$HERE/entrypoint.sh" "$HERE/70-chimera-container.cnf" "$context/"
-cp "$HERE/../deb/configure-repository.sh" "$context/"
+cp "$HERE/../deb/configure-repository.sh" "$HERE/../deb/verify-keyring.sh" \
+  "$HERE/../deb/extract-keyring.sh" "$HERE/../deb/verify-packages.sh" "$context/"
 docker buildx build --platform "linux/$arch" --build-arg "SERIES=$series" \
   --load --tag "$tag" "$context"
 printf 'Built %s\n' "$tag"

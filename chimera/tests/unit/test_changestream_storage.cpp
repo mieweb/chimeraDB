@@ -19,18 +19,30 @@ unsigned schema_installs = 0;
 const chimera::SqlSession* schema_install_session = nullptr;
 std::optional<chimera::TranslatorError> install_error;
 
+void enqueue_rows(std::vector<chimera::Row> rows) {
+  chimera::ResultSet result;
+  result.rows = std::move(rows);
+  results.push_back(std::move(result));
+}
+
 void return_rows(std::vector<chimera::Row> rows) {
   results.clear();
   query_count = 0;
   schema_installs = 0;
   schema_install_session = nullptr;
   install_error.reset();
-  chimera::ResultSet result;
-  result.rows = std::move(rows);
-  results.push_back(std::move(result));
+  enqueue_rows(std::move(rows));
 }
 
 void oldest(uint64_t seq) { return_rows({{std::to_string(seq)}}); }
+
+chimera::ChangeStreamOptions at_time(uint32_t t, uint32_t i) {
+  chimera::ChangeStreamOptions options;
+  options.start = chimera::ChangeStreamStart::kOperationTime;
+  options.ts_t = t;
+  options.ts_i = i;
+  return options;
+}
 }  // namespace
 
 namespace chimera {
@@ -88,6 +100,85 @@ TEST_CASE("history boundaries accept retained positions and reject gaps") {
   CHECK_NOTHROW(require_change_stream_history(sql, std::numeric_limits<uint64_t>::max()));
 }
 
+TEST_CASE("operation-time starts include the oldest retained event after pruning") {
+  SqlSession sql;
+  return_rows({{"0", "100", "1700000000", "7"}});
+  const uint64_t after = resolve_change_stream_start(sql, at_time(1700000000, 7));
+  REQUIRE(after == 99);
+  oldest(100);
+  CHECK_NOTHROW(require_change_stream_history(sql, after));
+  return_rows({{"100", "{}"}});
+  enqueue_rows({{"100"}});
+  const OplogBatch batch = read_changestream(sql, {"test", "events"}, after, 100);
+  CHECK(batch.documents.size() == 1);
+  CHECK(batch.last_seq == 100);
+}
+
+TEST_CASE("operation times older than a pruned edge report history lost") {
+  SqlSession sql;
+  for (const auto& options : {at_time(1700000000, 6), at_time(1699999999, UINT32_MAX)}) {
+    return_rows({{"0", "100", "1700000000", "7"}});
+    try {
+      resolve_change_stream_start(sql, options);
+      FAIL("a time older than retained history was accepted");
+    } catch (const TranslatorError& error) {
+      CHECK(error.code() == 286);
+    }
+  }
+}
+
+TEST_CASE("early operation times are safe when all history is retained") {
+  SqlSession sql;
+  for (const auto& options : {at_time(0, 0), at_time(1700000000, 6), at_time(1700000000, 7)}) {
+    return_rows({{"0", "1", "1700000000", "7"}});
+    CHECK(resolve_change_stream_start(sql, options) == 0);
+  }
+  // A later time with a retained predecessor resumes after that predecessor.
+  return_rows({{"105", "100", "1700000000", "7"}});
+  CHECK(resolve_change_stream_start(sql, at_time(1700000001, 0)) == 105);
+}
+
+TEST_CASE("a time origin on an empty oplog remains subject to cold-start pruning") {
+  SqlSession sql;
+  return_rows({{"0", std::nullopt, std::nullopt, std::nullopt}});
+  const uint64_t after = resolve_change_stream_start(sql, at_time(0, 0));
+  REQUIRE(after == 0);
+  oldest(0);
+  CHECK_NOTHROW(require_change_stream_history(sql, after));
+  oldest(3);
+  CHECK_THROWS_AS(require_change_stream_history(sql, after), TranslatorError);
+}
+
+TEST_CASE("a prune after time resolution cannot skip the first retained event") {
+  SqlSession sql;
+  return_rows({{"0", "100", "1700000000", "7"}});
+  const uint64_t after = resolve_change_stream_start(sql, at_time(1700000000, 7));
+  REQUIRE(after == 99);
+  // Row 100 disappears between resolution and the event SELECT; returning
+  // row 101 successfully would silently skip the event the time names.
+  return_rows({{"101", "{}"}});
+  enqueue_rows({{"101"}});
+  CHECK_THROWS_AS(read_changestream(sql, {"test", "events"}, after, 100), TranslatorError);
+  CHECK(query_count == 2);
+}
+
+TEST_CASE("each event SELECT validates history after reading even when no events match") {
+  SqlSession sql;
+  for (bool matching_event : {false, true}) {
+    return_rows(matching_event ? std::vector<Row>{{"100", "{}"}} : std::vector<Row>{});
+    // The event SELECT may have seen a complete page, but the subsequent
+    // history snapshot proves pruning raced that read. Fail before delivery.
+    enqueue_rows({{"102"}});
+    try {
+      read_changestream(sql, {"test", "events"}, 99, 100);
+      FAIL("the event read skipped its post-read history validation");
+    } catch (const TranslatorError& error) {
+      CHECK(error.code() == 286);
+    }
+    CHECK(query_count == 2);
+  }
+}
+
 TEST_CASE("a NULL change-stream row fails before it can be skipped") {
   SqlSession sql;
   const Namespace ns{"test", "events"};
@@ -108,10 +199,12 @@ TEST_CASE("change-stream storage preserves empty and populated batch positions")
   SqlSession sql;
   const Namespace ns{"test", "events"};
   return_rows({});
+  enqueue_rows({{"1"}});
   OplogBatch batch = read_changestream(sql, ns, 10, 100);
   CHECK(batch.last_seq == 10);
   CHECK(batch.documents.empty());
   return_rows({{"11", "{}"}, {"12", "{}"}});
+  enqueue_rows({{"1"}});
   batch = read_changestream(sql, ns, 10, 100);
   CHECK(batch.last_seq == 12);
   CHECK(batch.documents.size() == 2);

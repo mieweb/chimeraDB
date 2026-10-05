@@ -1,14 +1,27 @@
 # syntax=docker/dockerfile:1
 # build.sh supplies a small context with the matching Debian packages only.
+FROM debian:bookworm-slim AS verified-packages
+ARG SERIES=10.11
+COPY verify-packages.sh /usr/local/bin/chimera-verify-packages
+COPY packages/ /tmp/packages/
+RUN chimera-verify-packages /tmp/packages "$SERIES" "$(dpkg --print-architecture)" \
+      'Debian 12 (bookworm)' --runtime-files > /tmp/runtime-files && \
+    mkdir /runtime-packages && \
+    while IFS= read -r package; do cp "$package" /runtime-packages/; done < /tmp/runtime-files
+
 FROM debian:bookworm-slim
 ARG SERIES=10.11
 ENV DEBIAN_FRONTEND=noninteractive
 COPY configure-repository.sh /usr/local/bin/chimera-configure-repository
-COPY packages/ /tmp/packages/
+COPY verify-keyring.sh /usr/local/bin/verify-keyring.sh
+COPY extract-keyring.sh /usr/local/bin/extract-keyring.sh
+# Only the verified three runtime packages enter the final image. Debug symbols
+# remain downloadable artifacts and do not occupy any layer of the runtime.
+COPY --from=verified-packages /runtime-packages/ /tmp/packages/
 RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && \
     chmod 755 /usr/sbin/policy-rc.d && \
     /usr/local/bin/chimera-configure-repository "$SERIES" && \
-    cd /tmp/packages && sha256sum --check SHA256SUMS && \
+    cd /tmp/packages && \
     apt-get install -y --no-install-recommends ./*.deb gosu && \
     rm -rf /var/lib/apt/lists/* /tmp/packages /var/lib/mysql && \
     mkdir -p /var/lib/mysql /run/mysqld && \

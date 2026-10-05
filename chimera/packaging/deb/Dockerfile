@@ -5,6 +5,9 @@ FROM debian:${DEBIAN_SUITE} AS repository
 ARG SERIES=10.11
 ENV DEBIAN_FRONTEND=noninteractive
 COPY chimera/packaging/deb/configure-repository.sh /usr/local/bin/chimera-configure-repository
+COPY chimera/packaging/deb/verify-keyring.sh /usr/local/bin/verify-keyring.sh
+COPY chimera/packaging/deb/extract-keyring.sh /usr/local/bin/extract-keyring.sh
+COPY chimera/packaging/deb/verify-packages.sh /usr/local/bin/chimera-verify-packages
 RUN /usr/local/bin/chimera-configure-repository "$SERIES"
 
 FROM repository AS builder

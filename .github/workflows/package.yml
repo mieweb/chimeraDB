@@ -21,6 +21,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: test CLI readiness and client options without a server
         run: ./chimera/scripts/test-cli.sh
+      - name: test Homebrew interrupted initialization recovery
+        run: python3 chimera/packaging/homebrew/test-service.py
+      - name: test package manifests and repository key trust
+        if: runner.os == 'Linux'
+        run: ./chimera/packaging/deb/test-input-validation.sh
 
   linux:
     needs: cli

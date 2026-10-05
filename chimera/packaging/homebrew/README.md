@@ -14,6 +14,11 @@ ports are already occupied. Never start both services on the same ports.
 The service initializes its dedicated `var/chimeradb` (or `var/chimeradb@10.11`)
 directory. Keep `datadir` at that generated path; changing only the config cannot
 relocate initialization. Ports and listener settings can be customized.
+An interrupted first initialization leaves `.chimera-initializing` in that
+directory, and subsequent starts refuse to use the incomplete database. Preserve
+the directory for inspection, then restore a known-good backup or move it aside
+before retrying with an empty directory. The marker is removed only after the
+server starts and the ChimeraDB catalog setup succeeds.
 
 ## Prepare the tap
 

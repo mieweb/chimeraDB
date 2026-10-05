@@ -43,6 +43,23 @@ environment. Do not install Debian 12 native artifacts into Debian 13.
 
 **Current evidence (2026-10-04):**
 
+- PR #8 review fixes pass **99 unit cases and the full native development suite
+  on both MariaDB series**, including all nine differential specs. A stream opened
+  at the oldest retained event's timestamp now replays that event; older pruned
+  timestamps still report 286. The pruning regression waits for completed event
+  reads from its specific pending getMore, and a negative control with the old
+  entry-only history check fails after that synchronization.
+- Repository trust now installs only the pinned MariaDB primary certificate,
+  extracted from the upstream multi-key bundle and verified before APT sees it.
+  Complete package-manifest equality and runtime package identities are checked
+  before installation; debug symbols stay out of runtime image layers. All **24
+  real GPG/Debian-archive regressions** pass, both arm64 runtime variants pass
+  driver/persistence acceptance, and the updated 11.8 Debian lifecycle passes.
+- Homebrew retains an initialization marker until server readiness and catalog
+  setup complete, and refuses partial or interrupted initialization. All **seven
+  recovery regressions** and fresh-start/restart staging tests against both real
+  Homebrew MariaDB kegs pass. These focused recovery and package-input checks now
+  run in the package CI workflow.
 - Debian package recipes, Docker runtime/Compose/smoke scripts, Homebrew formula
   generation/build/service/smoke scripts, and the Linux package CI workflow are
   implemented and verified as described below. Public release publication remains open.
@@ -405,12 +422,12 @@ availability and full-server-build cost assumptions.
   source URL/checksum and update the separate tap repository. This automation is
   not implemented or published yet.
 
-> **Host limitation and CI distinction:** this Mac's stale CLT 26.3 on macOS 27
-> prevents a normal Homebrew formula build despite full Xcode 27 being selected.
-> Staging against the installed versioned kegs passes. Clean CI source installation,
-> formula tests and the complete service/lifecycle rerun now pass on both series,
-> including the first-ping initialization fix. This host's toolchain limitation
-> remains separate from the verified clean-runner installation path.
+> **Homebrew toolchain status (2026-10-04):** the stale CLT installation was removed
+> and Homebrew's minimum-toolchain check now passes with full Xcode 27 selected.
+> Both formulae pass actual source installation and isolated runtime tests on this
+> Mac against MariaDB 10.11.19 and 11.8.9. Clean CI also passes source installation,
+> formula tests and the complete service/lifecycle checks for both series. The
+> earlier staging-only limitation is resolved; publication of the tap remains open.
 
 ---
 

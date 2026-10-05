@@ -23,14 +23,18 @@ repository or release Docker image yet; bare `brew install chimeradb` and
 `apt install chimeradb` are not available installation routes.
 
 The delivery order is Docker on an Apple Silicon Mac, Homebrew on Mac, Docker
-in an Intel Proxmox Linux VM, then a Debian 12 Intel package. Recipes and their
-current verification limits are documented here:
+in the supplied Debian 13 Intel Proxmox LXC, then a native Debian Intel package.
+Recipes and their current verification limits are documented here:
 
 | Route | Build and installation instructions |
 |---|---|
-| Docker on Mac / Intel Linux VM | [Image, Compose and persistent-volume smoke test](chimera/packaging/docker/README.md) |
+| Docker on Mac / Intel Proxmox LXC | [Image, Compose and persistent-volume smoke test](chimera/packaging/docker/README.md) |
 | Homebrew | [Formula generation, service and source-build validation](chimera/packaging/homebrew/README.md) |
-| Debian 12 Intel | [Local `.deb` build, install and removal checks](chimera/packaging/deb/README.md) |
+| Debian 12 / 13 Intel | [Local `.deb` build, install and removal checks](chimera/packaging/deb/README.md) |
+
+Native packages must match the Debian release: Debian 12 supports MariaDB 10.11
+and 11.8; Debian 13 supports 11.8. Both MariaDB series run in Debian 12 Docker
+images on the supplied Debian 13 host.
 
 Existing source builds remain the verified development path; see
 [Building from source](#building-from-source). The
@@ -40,8 +44,18 @@ packages are outside the initial delivery scope.
 
 The Mongo listener has no authentication. Native installs bind it to loopback;
 the Docker Compose recipe publishes both protocols only on host loopback.
-After setup, clients use `mongosh mongodb://127.0.0.1:27017/appdb` and
-`mariadb -h127.0.0.1 -P3306 -uroot -p` (source-development ports differ).
+After setup, Mongo clients use `mongosh mongodb://127.0.0.1:27017/appdb`.
+SQL authentication depends on the installation route:
+
+- **Docker:** `mariadb --skip-ssl -h127.0.0.1 -P3306 -uroot -p`, using the
+  configured root password over the local connection (or an SSH tunnel).
+- **Homebrew:** `"$(brew --prefix mariadb@11.8)/bin/mariadb" --defaults-file="$(brew --prefix)/etc/chimeradb.cnf" --protocol=socket --user="$(id -un)"`.
+  For 10.11, use `mariadb@10.11` and `chimeradb@10.11.cnf`.
+- **Fresh Debian install:** `sudo mariadb --protocol=socket`, using root's Unix
+  socket authentication. Existing servers retain their configured SQL accounts.
+
+These examples use the default ports; source-development and custom deployments
+may use different ports.
 
 The whole idea in four statements:
 

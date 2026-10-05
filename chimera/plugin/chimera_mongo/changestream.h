@@ -17,13 +17,15 @@ namespace chimera {
 // A page of change events for one collection, oldest first — a change stream has
 // no `{$natural: -1}` form. Filtering is `ns` equality and nothing else, which is
 // the only filter a change stream can ever need, so `compile_filter` stays out
-// of it.
+// of it. Validates retained history after the read and before returning any
+// events, so concurrent pruning cannot be hidden by a later cursor advance.
 OplogBatch read_changestream(SqlSession& sql, const Namespace& ns, uint64_t after_seq,
                              uint64_t limit);
 
 // Turns the parsed start options into the sequence to read strictly after.
 // `startAtOperationTime` is inclusive of events *at* that time, so it resolves to
-// the last sequence strictly before it.
+// the last sequence strictly before it, or oldest.seq - 1 at the retained edge.
+// Times older than a pruned edge are refused; an empty oplog starts at zero.
 uint64_t resolve_change_stream_start(SqlSession& sql, const ChangeStreamOptions& opts);
 
 // The oldest sequence still retained, or 0 when the oplog has never held a row.

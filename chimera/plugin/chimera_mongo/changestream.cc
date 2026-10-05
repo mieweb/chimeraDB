@@ -64,6 +64,11 @@ OplogBatch read_changestream(SqlSession& sql, const Namespace& ns, uint64_t afte
     batch.last_seq = std::strtoull(row[0]->c_str(), nullptr, 10);
     batch.documents.push_back(from_extjson(*row[1]));
   }
+  // Check after every SELECT, including reads after a park. A prune before or
+  // during the read must be noticed before callers deliver events or advance
+  // their cursor. A prune after this check cannot remove the batch in memory;
+  // racing pruning may conservatively require resync, but cannot hide a gap.
+  require_change_stream_history(sql, after_seq);
   return batch;
 }
 
@@ -71,13 +76,42 @@ uint64_t resolve_change_stream_start(SqlSession& sql, const ChangeStreamOptions&
   switch (opts.start) {
     case ChangeStreamStart::kToken:
       return opts.after_seq;
-    case ChangeStreamStart::kOperationTime:
-      // "at or after" the requested time, so we resume after the last row that
-      // is strictly before it. (t, i) compares lexicographically.
-      return scalar(sql, "SELECT COALESCE(MAX(seq), 0) FROM chimera_meta.oplog WHERE ts_t < " +
-                             std::to_string(opts.ts_t) + " OR (ts_t = " +
-                             std::to_string(opts.ts_t) + " AND ts_i < " +
-                             std::to_string(opts.ts_i) + ")");
+    case ChangeStreamStart::kOperationTime: {
+      // Read the predecessor and retained edge in ONE snapshot. At the oldest
+      // retained event's exact timestamp, no predecessor remains; zero would
+      // incorrectly describe a cursor opened on a never-written oplog. Use
+      // oldest.seq - 1 instead, so that event is included and subsequent prune
+      // checks still detect losing it before the first getMore.
+      ResultSet rows = sql.query(
+          "SELECT before_time.after_seq, oldest.seq, oldest.ts_t, oldest.ts_i FROM "
+          "(SELECT COALESCE(MAX(seq), 0) AS after_seq FROM chimera_meta.oplog WHERE ts_t < " +
+          std::to_string(opts.ts_t) + " OR (ts_t = " + std::to_string(opts.ts_t) +
+          " AND ts_i < " + std::to_string(opts.ts_i) + ")) AS before_time LEFT JOIN "
+          "(SELECT seq, ts_t, ts_i FROM chimera_meta.oplog ORDER BY seq LIMIT 1) AS oldest "
+          "ON 1 = 1");
+      if (rows.rows.size() != 1 || rows.rows[0].size() != 4 || !rows.rows[0][0]) {
+        throw internal_error("could not resolve the change-stream operation time");
+      }
+      const Row& row = rows.rows[0];
+      if (!row[1] && !row[2] && !row[3]) return 0;  // empty since birth
+      if (!row[1] || !row[2] || !row[3]) {
+        throw internal_error("the oldest oplog row has a NULL sequence or timestamp");
+      }
+      const uint64_t before = std::strtoull(row[0]->c_str(), nullptr, 10);
+      const uint64_t oldest = std::strtoull(row[1]->c_str(), nullptr, 10);
+      const uint32_t oldest_t = static_cast<uint32_t>(std::strtoul(row[2]->c_str(), nullptr, 10));
+      const uint32_t oldest_i = static_cast<uint32_t>(std::strtoul(row[3]->c_str(), nullptr, 10));
+      const bool before_retained_time = opts.ts_t < oldest_t ||
+                                       (opts.ts_t == oldest_t && opts.ts_i < oldest_i);
+      // If row 1 survives, all history survives: an earlier start is safe.
+      // Otherwise a time older than the retained edge may have lost events.
+      if (oldest > 1 && before_retained_time) {
+        throw change_stream_history_lost(
+            "the requested operation time is older than the retained oplog; resync "
+            "(see changestream-plan.md)");
+      }
+      return before != 0 ? before : oldest - 1;
+    }
     case ChangeStreamStart::kHead:
       break;
   }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Used by both the package builder and the runtime Docker image.
 set -euo pipefail
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 series=${1:?usage: configure-repository.sh 10.11|11.8}
 case "$series" in 10.11|11.8) ;; *) echo "unsupported MariaDB series: $series" >&2; exit 1 ;; esac
 . /etc/os-release
@@ -64,14 +65,14 @@ apt-get install -y --no-install-recommends ca-certificates curl gnupg
 # Debian 12 needs MariaDB.org, so native Debian 13 installs keep their own server
 # packaging and its exact ABI identity rather than replacing it with a vendor build.
 if [[ $VERSION_CODENAME == bookworm && $series == 11.8 ]]; then
-  curl --fail --location --retry 3 --output /tmp/mariadb-keyring.gpg \
+  curl --fail --location --retry 3 --output "$source_config/mariadb-keyring.gpg" \
     https://supplychain.mariadb.com/mariadb-keyring-2019.gpg
-  # Community signing-key fingerprint published by MariaDB; restrict trust to
-  # this repository rather than adding a global trusted key.
-  gpg --batch --show-keys --with-colons /tmp/mariadb-keyring.gpg |
-    awk -F: '$1 == "fpr" { print $10 }' |
-    grep -qx '177F4010FE56CA3336300305F1656F24C74CD1D8'
-  install -m 644 /tmp/mariadb-keyring.gpg /usr/share/keyrings/chimera-mariadb.gpg
+  # The official download contains multiple primary keys. Extract and verify
+  # only the pinned certificate before installing the repository-scoped keyring.
+  "$HERE/extract-keyring.sh" "$source_config/mariadb-keyring.gpg" \
+    "$source_config/pinned-keyring.gpg" \
+    '177F4010FE56CA3336300305F1656F24C74CD1D8'
+  install -m 644 "$source_config/pinned-keyring.gpg" /usr/share/keyrings/chimera-mariadb.gpg
   cat > /etc/apt/sources.list.d/chimera-mariadb.sources <<'EOF'
 Types: deb deb-src
 URIs: https://deb.mariadb.org/11.8/debian
