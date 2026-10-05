@@ -24,7 +24,7 @@ Start the MariaDB service with systemd and report status.
 .nf
 sudo systemctl restart mariadb
 sudo chimeradb setup
-chimeradb status --socket=/run/mysqld/mysqld.sock --user=root
+sudo chimeradb status --socket=/run/mysqld/mysqld.sock --user=root
 .fi
 .SH MONGO ENDPOINT
 For a local SQL UNIX socket, status probes the configured Mongo bind and port
