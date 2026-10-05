@@ -60,6 +60,13 @@ environment. Do not install Debian 12 native artifacts into Debian 13.
   recovery regressions** and fresh-start/restart staging tests against both real
   Homebrew MariaDB kegs pass. These focused recovery and package-input checks now
   run in the package CI workflow.
+- The subsequent Docker initialization review also passes: marker acquisition is
+  atomic, data is rechecked after the claim, and the existing-volume path rejects
+  an initialization that began between its checks. Deterministic container tests
+  cover simultaneous claims, partial-state retries, delayed contenders and newly
+  appearing system tables. Both arm64 runtime variants pass again; the old
+  touch-based entrypoint fails the simultaneous-claim negative control. These
+  checks run as part of Docker acceptance in the package matrix.
 - Debian package recipes, Docker runtime/Compose/smoke scripts, Homebrew formula
   generation/build/service/smoke scripts, and the Linux package CI workflow are
   implemented and verified as described below. Public release publication remains open.

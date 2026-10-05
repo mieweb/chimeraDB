@@ -42,12 +42,16 @@ later does not reset an existing volume's password. `_FILE` is supported by the
 entrypoint for deployments that provide a mounted secret.
 
 The entrypoint initializes an empty volume once, runs `chimeradb setup`, then
-runs MariaDB as `mysql`. The volume survives `docker compose down`; `down -v`
+runs MariaDB as `mysql`. An atomic marker claim prevents competing first starts
+from initializing the same volume; interrupted initialization is preserved and
+refused on the next start. The volume survives `docker compose down`; `down -v`
 deletes it. Back up data before upgrading, and do not switch MariaDB series on an
 existing volume without a separately tested migration. Replacing a container
 with the same series must preserve data; `test.sh` checks this using a fresh
 throwaway volume, plus graceful shutdown, driver CRUD, SQL visibility, oplog,
-SQL-triggered change streams and the `mongo()` SQL function.
+SQL-triggered change streams and the `mongo()` SQL function. It also runs
+`test-initialization.sh`, which deterministically tests competing and delayed
+initializers with disposable containers and volumes.
 
 ## Intel Proxmox
 

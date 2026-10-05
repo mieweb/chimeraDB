@@ -14,13 +14,16 @@ for arg in "$@"; do
 done
 [[ $(id -u) == 0 ]] || die 'start with the image default user; the entrypoint drops the server to mysql'
 datadir=/var/lib/mysql
+init_marker="$datadir/.chimera-initializing"
 socket=/run/mysqld/mysqld.sock
 mkdir -p "$datadir" /run/mysqld
 chown mysql:mysql /run/mysqld
 sql() { mariadb --no-defaults --protocol=socket --socket="$socket" --user=root "$@"; }
-if [[ -f $datadir/.chimera-initializing ]]; then
-  die 'previous initialization was interrupted; inspect the volume before retrying'
-fi
+require_complete_initialization() {
+  [[ ! -e $init_marker && ! -L $init_marker ]] ||
+    die 'initialization is in progress or was interrupted; inspect the volume before retrying'
+}
+require_complete_initialization
 if [[ ! -d $datadir/mysql ]]; then
   if [[ -n ${MARIADB_ROOT_PASSWORD_FILE:-} ]]; then
     [[ -z ${MARIADB_ROOT_PASSWORD:-} ]] || die 'set MARIADB_ROOT_PASSWORD or MARIADB_ROOT_PASSWORD_FILE, not both'
@@ -30,7 +33,17 @@ if [[ ! -d $datadir/mysql ]]; then
   [[ -z $(find "$datadir" -mindepth 1 -maxdepth 1 ! -name lost+found -print -quit) ]] ||
     die 'data directory is nonempty but has no mysql system tables; refusing to initialize over it'
   chown mysql:mysql "$datadir"
-  touch "$datadir/.chimera-initializing"
+  # Claim the shared volume atomically: another container may have passed the
+  # same empty-directory check before either initializer creates system tables.
+  (set -o noclobber; : > "$init_marker") ||
+    die 'another initializer claimed this volume; inspect it before retrying'
+  # A delayed contender could claim only after the winner completed and removed
+  # its marker. Recheck under our claim before touching any database files.
+  if [[ -n $(find "$datadir" -mindepth 1 -maxdepth 1 \
+      ! -name lost+found ! -name .chimera-initializing -print -quit) ]]; then
+    rm "$init_marker"
+    die 'the volume changed before initialization was claimed; inspect it before retrying'
+  fi
   mariadb-install-db --no-defaults --user=mysql --datadir="$datadir" \
     --auth-root-authentication-method=socket --skip-test-db >/dev/null
   # A partial initialization never qualifies as a healthy existing volume.
@@ -64,7 +77,10 @@ SQL
   mariadb-admin --no-defaults --socket="$socket" --user=root shutdown
   wait "$init_pid"
   trap - EXIT TERM INT
-  rm "$datadir/.chimera-initializing"
+  rm "$init_marker"
 fi
+# A competing initializer may have created mysql/ after our first marker check,
+# causing us to take the existing-volume path. Never start over its partial data.
+require_complete_initialization
 unset MARIADB_ROOT_PASSWORD MARIADB_ROOT_PASSWORD_FILE
 exec gosu mysql "$@"

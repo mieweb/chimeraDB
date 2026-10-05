@@ -7,6 +7,7 @@ image=$2
 docker info >/dev/null 2>&1 || { echo 'Docker is not running' >&2; exit 1; }
 architecture=$(docker image inspect --format '{{.Architecture}}' "$image")
 [[ $architecture == arm64 || $architecture == amd64 ]] || { echo 'Unsupported image architecture' >&2; exit 1; }
+"$HERE/test-initialization.sh" --image "$image"
 name="chimera-release-$(date +%s)-$$"
 volume="$name-data"
 network="$name-net"
