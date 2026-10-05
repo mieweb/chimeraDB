@@ -11,6 +11,10 @@
 #
 #   chimeradb setup --socket=/run/mysqld/mysqld.sock --user=root
 #
+# Status requires a successful Mongo ping. For tunnels or a separate endpoint,
+# set CHIMERA_MONGO_HOST and optionally CHIMERA_MONGO_PORT. Loopback SQL TCP is
+# ambiguous with a tunnel and requires CHIMERA_MONGO_HOST; UNIX sockets do not.
+#
 # Deliberately not a package maintainer script. postinst cannot load SQL into a
 # server that may not be running, may be remote, or may need credentials; it
 # prints this command instead, and a printed instruction cannot leave apt broken.
@@ -39,6 +43,42 @@ sql() {
 }
 scalar() { sql -N -B -e "$1" 2>/dev/null || true; }
 
+probe_mongo() {
+  local bind=$1 port=${CHIMERA_MONGO_PORT:-$2} host=${CHIMERA_MONGO_HOST:-}
+  local info connection probe=""
+  local probes=("$HERE/chimeradb-health" "$HERE/../libexec/chimeradb-health")
+  if [[ -z $host ]]; then
+    # The connected client's status reports its actual transport/host, including
+    # options-file defaults. Never parse --print-defaults: it contains passwords
+    # and prints unescaped argument values. Keep this status output private too.
+    info=$(LC_ALL=C sql -B -e '\s' 2>/dev/null) || {
+      printf 'cannot inspect SQL connection; set CHIMERA_MONGO_HOST\n'; return 1;
+    }
+    connection=$(printf '%s\n' "$info" | sed -n 's/^Connection:[[:space:]]*//p')
+    case "$connection" in
+      *' via UNIX socket') host=$bind; [[ $host != 0.0.0.0 ]] || host=127.0.0.1 ;;
+      *' via TCP/IP')
+        host=${connection% via TCP/IP}
+        case "$host" in
+          localhost|127.*|::1|'[::1]')
+            printf 'loopback SQL TCP may be a tunnel; set CHIMERA_MONGO_HOST (and CHIMERA_MONGO_PORT if forwarded)\n'
+            return 1 ;;
+        esac
+        ;;
+      *) printf 'cannot determine SQL transport; set CHIMERA_MONGO_HOST\n'; return 1 ;;
+    esac
+  fi
+  # The developer build stays in ignored runtime output, never beside sources.
+  if [[ -f $HERE/health/CMakeLists.txt ]]; then
+    probes+=("${CHIMERA_OUT:-$HERE/../.run}/health/chimeradb-health")
+  fi
+  for probe in "${probes[@]}"; do
+    if [[ -x $probe ]]; then "$probe" "$host" "$port"; return; fi
+  done
+  printf 'chimeradb-health is missing; reinstall the matching ChimeraDB plugin package\n'
+  return 1
+}
+
 cmd_setup() {
   local sql_dir
   sql_dir=$(find_sql_dir)
@@ -55,7 +95,7 @@ cmd_setup() {
 }
 
 cmd_status() {
-  local server plugin port bind catalog udf ready=0
+  local server plugin port bind catalog udf health ready=0
   server=$(scalar 'SELECT VERSION()')
   [[ -n $server ]] || die "cannot reach the server — pass the same options you would give the mariadb client"
   printf '  server    %s\n' "$server"
@@ -72,7 +112,14 @@ cmd_status() {
     # is worth saying out loud every single time it is seen.
     [[ $bind == 127.* || $bind == localhost ]] ||
       printf '  WARNING   %s is not loopback and the listener authenticates nobody\n' "$bind"
-    [[ $plugin == ACTIVE ]] || ready=1
+    if [[ $plugin != ACTIVE ]]; then
+      ready=1
+    elif health=$(probe_mongo "$bind" "$port" 2>&1); then
+      printf '  ping      ready\n'
+    else
+      printf '  ping      unavailable — %s\n' "$health"
+      ready=1
+    fi
   fi
 
   catalog=$(scalar "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = 'chimera_meta'")
@@ -98,7 +145,8 @@ cmd_start() {
     note "brew services start $CHIMERA_BREW_FORMULA"
     brew services start "$CHIMERA_BREW_FORMULA"
     # launchd returns before first-run initialization and catalog setup finish.
-    for ((attempt=0; attempt<120; attempt++)); do
+    local deadline=$((SECONDS + 120))
+    while ((SECONDS < deadline)); do
       if (cmd_status) >/dev/null 2>&1; then cmd_status; return; fi
       sleep 1
     done
@@ -118,6 +166,6 @@ case "$command" in
   setup) cmd_setup ;;
   status) cmd_status ;;
   start) cmd_start ;;
-  -h|--help|help) sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command '$command' (expected setup, status or start)" ;;
 esac

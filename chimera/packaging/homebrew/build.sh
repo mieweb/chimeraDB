@@ -61,8 +61,11 @@ cmake -S "$source_dir" -B "$build_dir/server" -G "Unix Makefiles" \
 cmake --build "$build_dir/server" --target chimera_mongo
 cmake -S "$HERE/probe" -B "$build_dir/wire-smoke" -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build "$build_dir/wire-smoke"
+cmake -S "$CHIMERA/cli/health" -B "$build_dir/health" -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build "$build_dir/health"
 install -m 755 "$build_dir/server/plugin/chimera_mongo/chimera_mongo.so" "$prefix/lib/chimeradb/plugin/"
 install -m 755 "$build_dir/wire-smoke/chimeradb-wire-smoke" "$prefix/libexec/"
+install -m 755 "$build_dir/health/chimeradb-health" "$prefix/libexec/"
 install -m 755 "$CHIMERA/cli/chimeradb" "$prefix/libexec/chimeradb"
 install -m 755 "$HERE/service.sh" "$prefix/libexec/chimeradb-service"
 install -m 644 "$CHIMERA/sql/catalog.sql" "$prefix/share/chimeradb/sql/"

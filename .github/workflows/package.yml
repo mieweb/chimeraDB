@@ -23,6 +23,8 @@ jobs:
         run: ./chimera/scripts/test-cli.sh
       - name: test Homebrew interrupted initialization recovery
         run: python3 chimera/packaging/homebrew/test-service.py
+      - name: test Homebrew reinstall cleanup and source archive provenance
+        run: python3 chimera/packaging/homebrew/test-packaging.py
       - name: test package manifests and repository key trust
         if: runner.os == 'Linux'
         run: ./chimera/packaging/deb/test-input-validation.sh

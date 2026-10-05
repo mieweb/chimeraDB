@@ -56,11 +56,13 @@ checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
 destination = work / f"chimeradb-{version}-{checksum[:16]}.tar.gz"
 archive.replace(destination)
 (work / "source.url").write_text(destination.as_uri() + "\n")
+(work / "source.path").write_text(str(destination) + "\n")
 (work / "source.sha256").write_text(checksum + "\n")
 print(f"Source snapshot: {destination}")
 PY
 python3 "$HERE/render-formula.py" --url "$(cat "$work/source.url")" \
-  --sha256 "$(cat "$work/source.sha256")" --output "$tap_repo/Formula"
+  --sha256 "$(cat "$work/source.sha256")" --source-archive "$(cat "$work/source.path")" \
+  --output "$tap_repo/Formula"
 # Reinstall evaluates conflicts_with and loads the sibling formula too. Trust
 # only the two formulae just generated here, rather than the entire tap or all
 # third-party code. Older Homebrew versions predate this trust command.

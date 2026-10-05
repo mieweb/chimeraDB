@@ -15,7 +15,8 @@ Load the catalog and create the mongo() SQL function. Safe to repeat.
 Run this after MariaDB has loaded chimera_mongo.
 .TP
 .B status
-Report the server, plugin listener and catalog setup state.
+Report the server, plugin listener and catalog setup state. Success requires
+an active plugin, completed setup and a successful Mongo ping within two seconds.
 .TP
 .B start
 Start the MariaDB service with systemd and report status.
@@ -25,6 +26,13 @@ sudo systemctl restart mariadb
 sudo chimeradb setup
 chimeradb status --socket=/run/mysqld/mysqld.sock --user=root
 .fi
+.SH MONGO ENDPOINT
+For a local SQL UNIX socket, status probes the configured Mongo bind and port
+(using 127.0.0.1 for a wildcard bind). For non-loopback SQL TCP, it probes the
+SQL connection host and configured Mongo port. Set CHIMERA_MONGO_HOST and,
+optionally, CHIMERA_MONGO_PORT for forwarded or separate Mongo endpoints.
+Loopback SQL TCP may be an SSH tunnel and requires an explicit CHIMERA_MONGO_HOST;
+status refuses to guess a local Mongo endpoint in that case.
 .SH SECURITY
 The Mongo listener has no authentication and defaults to 127.0.0.1:27017.
 Do not make this endpoint publicly reachable.

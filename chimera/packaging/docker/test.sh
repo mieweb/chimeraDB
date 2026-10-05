@@ -50,6 +50,18 @@ if docker exec "$name" sh -c "$healthcheck"; then
 fi
 docker exec "$name" rm /var/lib/mysql/.chimera-initializing
 docker exec "$name" sh -c "$healthcheck"
+# Keep MariaDB and its ACTIVE plugin healthy while selecting an unreachable
+# Mongo endpoint. Execute the image's actual health command, including its real
+# compiled ping helper: the old SQL-only check incorrectly accepted this state.
+[[ $(docker exec "$name" mariadb --no-defaults --protocol=socket \
+  --socket=/run/mysqld/mysqld.sock --user=root -N -B \
+  -e "SELECT plugin_status FROM information_schema.plugins WHERE plugin_name='chimera_mongo'") == ACTIVE ]]
+if docker exec -e CHIMERA_MONGO_HOST=127.0.0.1 -e CHIMERA_MONGO_PORT=1 "$name" sh -c "$healthcheck"; then
+  echo 'Health probe accepted an unreachable Mongo endpoint with an ACTIVE plugin' >&2
+  exit 1
+fi
+docker exec "$name" sh -c "$healthcheck"
+printf 'PASS: image health requires a live Mongo ping while the SQL plugin is ACTIVE\n'
 docker port "$name" 3306/tcp | grep -q '^127\.0\.0\.1:'
 docker port "$name" 27017/tcp | grep -q '^127\.0\.0\.1:'
 docker run --rm --network "$network" -e MARIADB_ROOT_PASSWORD "$runner"

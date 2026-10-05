@@ -16,7 +16,18 @@ committed rows. A separate conservative migration boundary preserves access to
 retained legacy events when earlier pruning cannot be reconstructed. Legacy setup
 refuses an active caller transaction with a commit-or-rollback retry message,
 avoiding a wait on that caller's own locks without committing its transaction.
-This follow-up passes **115 unit cases**, both full native suites and all nine
+
+The subsequent PR #8 summary review moves retention discovery outside the writer
+critical section. Pruners serialize with each other, freeze their candidate range,
+then revalidate its boundary before atomically deleting and recording history.
+A no-op pass never takes the writer lock. Both full native suites now pass **118
+unit cases** and all nine differential specs per series. The isolated regression
+holds the clock row in a separate connection and observes a completed no-op
+candidate scan; the previous plugin fails this negative control. Evidence is in
+`chimera/.run/review-pr8/native-summary-10.11.log`, `native-summary-11.8.log`
+and `pruner-scan-negative.log`.
+
+The rollback-gap follow-up at `f660b25` passes **115 unit cases**, both full native suites and all nine
 differential specs per series. The isolated
 [rollback regression](chimera/scripts/test-changestream-rollback.sh) covers
 initial/interior gaps, real and no-op pruning, restart persistence, legacy
@@ -273,7 +284,12 @@ reach it. Model the tests on [test_oplog.cpp](chimera/tests/unit/test_oplog.cpp)
   records the highest sequence and timestamp actually removed in the same
   transaction as deletion. No-op pruning leaves that state unchanged. Both limits
   still leave **at least the newest row**, and the row limit counts retained rows
-  rather than sequence distance. Fresh databases begin with no recorded loss.
+  rather than sequence distance. Candidate scans run before acquiring the writer
+  clock; a no-op pass never takes that lock. A pruning-only mutex protects the
+  plan, and deletion revalidates its frozen boundary under the clock lock before
+  committing the actual deletions and watermarks together. Writes arriving
+  during planning remain for a later retention pass. Fresh databases begin with
+  no recorded loss.
   Legacy databases without pruning records retain an explicit conservative
   boundary for uncertain earlier history while allowing access to retained events;
   that migration boundary is separate from the record of actual deletions.

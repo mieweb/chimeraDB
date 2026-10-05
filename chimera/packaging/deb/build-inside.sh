@@ -39,6 +39,8 @@ cmake -S "$source_tree" -B /build/server -G "Unix Makefiles" \
 cmake --build /build/server --target chimera_mongo --parallel "$jobs"
 plugin=/build/server/plugin/chimera_mongo/chimera_mongo.so
 test -f "$plugin"
+cmake -S /work/chimera/cli/health -B /build/health -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build /build/health --parallel "$jobs"
 
 cd /work
 cp -R chimera/packaging/deb/debian ./debian
@@ -47,6 +49,7 @@ rm debian/control.in
 chmod 755 debian/rules
 release=$(cat chimera/VERSION)
 export CHIMERA_SERIES=$series CHIMERA_SERVER_VERSION=$version CHIMERA_PLUGIN=$plugin
+export CHIMERA_HEALTH=/build/health/chimeradb-health
 cat > debian/changelog <<EOF
 chimeradb ($release-${REVISION:-1}) unstable; urgency=medium
 

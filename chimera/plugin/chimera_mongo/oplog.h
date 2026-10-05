@@ -50,9 +50,11 @@ OplogBatch read_oplog(SqlSession& sql, const bson_t* filter, uint64_t after_seq,
 uint64_t oplog_head(SqlSession& sql);
 
 // Capped-collection emulation: trims by age and by row count, whichever bites
-// first; either limit is off when zero. Deletes and advances durable history in
-// one transaction. Requires a session without a caller transaction in progress.
-// Returns the number of rows removed.
+// first; either limit is off when zero. Plans scans before locking writers,
+// then deletes and advances durable history in one transaction. Requires a
+// fresh autocommit session without a caller transaction in progress. Appends
+// during planning may defer additional trimming until the next pass. Returns
+// the number of rows removed.
 uint64_t prune_oplog(SqlSession& sql, uint64_t max_rows, uint64_t max_age_seconds);
 
 // Parks until a write is signalled or `timeout_ms` elapses. Returns true when a

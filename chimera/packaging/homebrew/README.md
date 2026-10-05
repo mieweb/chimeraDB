@@ -32,6 +32,7 @@ formulae with its real SHA-256:
 chimera/packaging/source.sh --ref <tested-commit-or-tag>
 python3 chimera/packaging/homebrew/render-formula.py \
   --url https://github.com/mieweb/chimeraDB/releases/download/v0.1.0/chimeradb-0.1.0.tar.gz \
+  --source-archive chimera/packaging/dist/source/chimeradb-0.1.0.tar.gz \
   --sha256 <archive-sha256> --output /path/to/homebrew-chimeradb/Formula
 ```
 
@@ -39,7 +40,9 @@ python3 chimera/packaging/homebrew/render-formula.py \
 commit metadata under `chimera/packaging/dist/source/`. Use that archive's
 checksum and eventual published URL when generating release formulae.
 
-The generator reads `chimera/VERSION`; the output belongs in the tap repository.
+The generator verifies the local archive against the supplied checksum and reads
+`chimera/VERSION` inside that archive, even when the checkout is at a different
+version. The output belongs in the tap repository.
 Do not publish placeholder checksums. The source URL and checksum must be updated
 together for each release. The MariaDB source resource uses the trusted URL and
 checksum from the corresponding Homebrew formula at build time, and `build.sh`

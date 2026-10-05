@@ -8,6 +8,7 @@ override_dh_auto_install:
 	install -D -m 644 chimera/sql/catalog.sql debian/chimeradb-common/usr/share/chimeradb/sql/catalog.sql
 	install -D -m 644 chimera/packaging/deb/debian/chimeradb.1 debian/chimeradb-common/usr/share/man/man1/chimeradb.1
 	install -D -m 644 $(CHIMERA_PLUGIN) debian/chimeradb-plugin-$(CHIMERA_SERIES)/usr/lib/mysql/plugin/chimera_mongo.so
+	install -D -m 755 $(CHIMERA_HEALTH) debian/chimeradb-plugin-$(CHIMERA_SERIES)/usr/libexec/chimeradb-health
 	install -D -m 644 chimera/packaging/deb/debian/60-chimera.cnf debian/chimeradb-plugin-$(CHIMERA_SERIES)/etc/mysql/mariadb.conf.d/60-chimera.cnf
 
 override_dh_gencontrol:

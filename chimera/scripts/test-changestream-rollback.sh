@@ -24,6 +24,8 @@ PIDFILE="$INSTANCE_DIR/mariadbd.pid"
 ERRLOG="$INSTANCE_DIR/mariadbd.err"
 server_pid=""
 watch_pid=""
+clock_locker_pid=""
+clock_locker_id=""
 stop_private() {
   [[ -n $server_pid ]] || return 0
   kill "$server_pid" 2>/dev/null || true
@@ -43,6 +45,13 @@ stop_private() {
 cleanup() {
   local status=$?
   trap - EXIT
+  if [[ -n $clock_locker_id ]]; then
+    chimera_sql -e "KILL CONNECTION $clock_locker_id" >/dev/null 2>&1 || true
+  fi
+  if [[ -n $clock_locker_pid ]]; then
+    kill "$clock_locker_pid" 2>/dev/null || true
+    wait "$clock_locker_pid" 2>/dev/null || true
+  fi
   if [[ -n $watch_pid ]]; then
     kill "$watch_pid" 2>/dev/null || true
     wait "$watch_pid" 2>/dev/null || true
@@ -192,9 +201,22 @@ mongo_eval 'replay({resumeAfter: token(0)}, ["first", "second"]);
   replay({startAtOperationTime: Timestamp(0, 0)}, ["first", "second"]);'
 assert_unpruned "restart before pruning"
 
-# Observe a real no-op pruner pass: max_rows counts two committed rows, not the
-# four allocated sequence numbers. The general log records completed queries;
-# then taking the clock lock waits for that pruning transaction to finish.
+# Hold the writer clock while observing a real no-op pruning pass. Its completed
+# candidate read must appear before the clock is released: scanning retention
+# while holding that lock would wait here and block every trigger writer too.
+# max_rows counts two committed rows, not the four allocated sequence numbers.
+chimera_sql -N -B --unbuffered -e 'START TRANSACTION;
+  SELECT id FROM chimera_meta.oplog_clock WHERE id=1 FOR UPDATE;
+  SELECT CONCAT("CLOCK_LOCKED:", CONNECTION_ID()); DO SLEEP(60); ROLLBACK' \
+  >"$INSTANCE_DIR/clock-lock.out" 2>&1 &
+clock_locker_pid=$!
+for _ in $(seq 1 100); do
+  clock_locker_id=$(sed -n 's/^CLOCK_LOCKED:\([0-9][0-9]*\)$/\1/p' "$INSTANCE_DIR/clock-lock.out")
+  [[ -z $clock_locker_id ]] || break
+  kill -0 "$clock_locker_pid" 2>/dev/null || die "clock-lock fixture exited early"
+  sleep 0.1
+done
+[[ $clock_locker_id =~ ^[0-9]+$ ]] || die "clock-lock fixture did not acquire the writer clock"
 chimera_sql -e 'SET GLOBAL log_output="TABLE"; SET GLOBAL general_log=ON;
   SET GLOBAL chimera_mongo_oplog_max_rows=2'
 noop_query="SELECT seq FROM chimera_meta.oplog WHERE seq < $second AND (seq < $first) ORDER BY seq DESC LIMIT 1"
@@ -205,7 +227,13 @@ for _ in $(seq 1 200); do
   fi
   sleep 0.1
 done
-$observed || die "did not observe the no-op pruning pass within 20 seconds"
+$observed || die "no-op pruning waited on the writer clock instead of scanning outside it"
+chimera_sql -e "KILL CONNECTION $clock_locker_id"
+clock_locker_id=""
+wait "$clock_locker_pid" 2>/dev/null || true
+clock_locker_pid=""
+# Taking the clock now also waits for any in-flight pruning transaction to
+# finish before checking that a no-op never publishes a deletion watermark.
 chimera_sql -e 'START TRANSACTION; SELECT id FROM chimera_meta.oplog_clock WHERE id=1 FOR UPDATE; COMMIT;
   SET GLOBAL general_log=OFF' >/dev/null
 check_eq "row limit counts committed rows across gaps" "$(sql_scalar 'SELECT COUNT(*) FROM chimera_meta.oplog')" 2

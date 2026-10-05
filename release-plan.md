@@ -43,7 +43,22 @@ environment. Do not install Debian 12 native artifacts into Debian 13.
 
 **Current evidence (2026-10-04):**
 
-- The follow-up rollback-gap review passes **115 unit cases and both full native
+- The PR #8 summary-only findings are covered as well as the inline threads.
+  Both full native suites now pass **118 unit cases**, live regressions and all
+  nine differential specs per series. Retention discovery runs before the writer
+  lock; a live regression proves a no-op scan completes while another connection
+  holds that lock, and the previous plugin fails this negative control.
+  `chimeradb status` and Docker health now require a valid Mongo ping with a
+  two-second deadline, using a compiled helper included in both package routes.
+  **17 real TCP/CLI cases**, a deterministic two-case address-fallback fixture and
+  **18 CLI regressions** pass. Twelve committed Homebrew packaging tests cover
+  reinstall cleanup/exit status and deriving the formula version from the
+  checksummed source archive, even when the checkout is at a different version.
+  These regressions run in CI. Local evidence is in
+  `chimera/.run/review-pr8/native-summary-10.11.log`,
+  `native-summary-11.8.log`, `pruner-scan-negative.log`, `health-tests.log`,
+  `health-build.log`, `cli-summary-tests.log` and `homebrew-packaging-tests.log`.
+- The rollback-gap review at `f660b25` passes **115 unit cases and both full native
   suites**, with all nine differential specs per series. History loss now uses
   durable records of actual deletions, committed atomically with pruning; row
   limits count committed events. An isolated live fixture verifies initial and
@@ -96,8 +111,8 @@ environment. Do not install Debian 12 native artifacts into Debian 13.
   initialization are verified. A missing clock is bootstrapped in a separate
   `SqlSession`, so initialization DDL cannot commit a caller's SQL gateway
   transaction. Deterministic tests cover session identity and propagated errors.
-- Eight server-free CLI checks pass, including failed readiness when the plugin
-  is missing/inactive and Homebrew defaults-file forwarding.
+- The CLI checks include failed readiness when the plugin is missing/inactive,
+  a live Mongo ping, endpoint selection and Homebrew defaults-file forwarding.
 - **All four Debian package and Docker combinations pass locally:** MariaDB
   10.11.18 and 11.8.9 × `arm64` and `amd64`. Package tests cover installation,
   repeated setup, conffile preservation on reinstall, restart, removal, purge and
@@ -258,7 +273,7 @@ At the original baseline, three concrete things were macOS-only:
   `demo-projection` — every D3, D8 and D10 assertion, identical to macOS.
 
 - [ ] **M9.0.4** Run the complete development `test.sh` pyramid for both server series
-  on arm64 **and** amd64. All 93 server-independent tests and the packaged plugin,
+  on arm64 **and** amd64. The server-independent suite and the packaged plugin,
   SQL/Mongo, change-stream and persistence paths now pass in the Linux package
   matrix on native CI runners. The Linux reference-dependent demos/differential
   suite have not yet run; local amd64 package/runtime validation used emulation.

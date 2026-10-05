@@ -62,17 +62,22 @@ struct Database {
     replies.emplace_back(std::move(result));
   }
 
-  void pruning_snapshot(uint64_t head = 100) {
-    rows({{"1"}});  // clock row locked before any retention selection
+  void pruning_locks() {
+    rows({{"1"}});  // clock row locked only after planning found work
     rows({{"0"}});  // durable pruning metadata exists
-    rows({{std::to_string(head)}});
   }
 
-  void one_row_candidate() {
-    pruning_snapshot();
+  void one_row_plan() {
+    rows({{"100"}});  // committed head fences every preflight read and delete
     rows({{"100"}});  // retain one actual event, despite the sequence gap
     rows({{"1"}});    // actual last deleted event, not numeric cutoff 99
     rows({{"900", "7"}});
+  }
+
+  void one_row_candidate() {
+    one_row_plan();
+    pruning_locks();
+    rows({{"1"}});  // revalidate the planned candidate by primary key
     affected = 1;
   }
 };
@@ -136,46 +141,55 @@ TEST_CASE("disabled pruning does not open a transaction or advance history") {
   CHECK(calls.empty());
 }
 
-TEST_CASE("pruning fewer actual events than the limit does not advance history") {
+TEST_CASE("the default row-cap scan never locks writers when fewer events exist") {
   Database database;
   SqlSession sql;
-  database.pruning_snapshot();
-  database.rows({});  // no third row, even though MAX(seq) is 100
-  CHECK(prune_oplog(sql, 3, 0) == 0);
+  database.rows({{"100"}});
+  database.rows({});  // fewer than 100,000 actual retained events
+  CHECK(prune_oplog(sql, 100000, 0) == 0);
+  REQUIRE(matching("SELECT seq FROM chimera_meta.oplog ORDER BY seq DESC LIMIT 1 OFFSET 99999").size() == 1);
   CHECK(matching("DELETE").empty());
   CHECK(matching("UPDATE chimera_meta.oplog_history").empty());
-  CHECK(matching("COMMIT").size() == 1);
+  CHECK(matching("BEGIN").empty());
+  CHECK(matching("SELECT id FROM chimera_meta.oplog_clock").empty());
+  for (const auto& call : calls) CHECK_FALSE(call.in_transaction);
   CHECK(replies.empty());
 }
 
 TEST_CASE("a prune with no eligible rows leaves deletion watermarks untouched") {
   Database database;
   SqlSession sql;
-  database.pruning_snapshot();
+  database.rows({{"100"}});
   database.rows({{"100"}});
   database.rows({});  // only the newest event remains
   CHECK(prune_oplog(sql, 1, 0) == 0);
   CHECK(matching("DELETE").empty());
   CHECK(matching("UPDATE chimera_meta.oplog_history").empty());
-  CHECK(matching("COMMIT").size() == 1);
+  CHECK(matching("BEGIN").empty());
+  CHECK(matching("SELECT id FROM chimera_meta.oplog_clock").empty());
+  for (const auto& call : calls) CHECK_FALSE(call.in_transaction);
   CHECK(replies.empty());
 }
 
-TEST_CASE("pruning locks writers before selecting and commits deletion with actual watermarks") {
+TEST_CASE("pruning plans outside writer locks then atomically deletes verified history") {
   Database database;
   SqlSession sql;
   database.one_row_candidate();
   CHECK(prune_oplog(sql, 1, 0) == 1);
-  REQUIRE(calls.size() >= 4);
-  CHECK(calls[0].kind == "begin");
-  CHECK(calls[1].statement == "SELECT id FROM chimera_meta.oplog_clock WHERE id = 1 FOR UPDATE");
-  CHECK(calls[2].statement == "SELECT pruned_seq FROM chimera_meta.oplog_history WHERE id = 1 FOR UPDATE");
+  REQUIRE(calls.size() >= 9);
+  CHECK(calls[0].statement == "SELECT COALESCE(MAX(seq), 0) FROM chimera_meta.oplog");
+  CHECK(calls[1].statement == "SELECT seq FROM chimera_meta.oplog ORDER BY seq DESC LIMIT 1 OFFSET 0");
+  CHECK(calls[4].kind == "begin");
+  CHECK(calls[5].statement == "SELECT id FROM chimera_meta.oplog_clock WHERE id = 1 FOR UPDATE");
+  CHECK(calls[6].statement == "SELECT pruned_seq FROM chimera_meta.oplog_history WHERE id = 1 FOR UPDATE");
+  CHECK(calls[7].statement == "SELECT seq FROM chimera_meta.oplog WHERE seq = 1 AND (seq < 100 AND (seq < 100))");
   CHECK(calls.back().kind == "commit");
   const auto deleted = matching("DELETE FROM chimera_meta.oplog");
   const auto updated = matching("UPDATE chimera_meta.oplog_history");
   REQUIRE(deleted.size() == 1);
   REQUIRE(updated.size() == 1);
   CHECK(deleted[0].in_transaction);
+  CHECK(deleted[0].statement == "DELETE FROM chimera_meta.oplog WHERE seq <= 1 AND (seq < 100 AND (seq < 100))");
   CHECK(updated[0].in_transaction);
   CHECK(updated[0].statement.find("GREATEST(pruned_seq, 1)") != std::string::npos);
   CHECK(updated[0].statement.find("GREATEST(pruned_ts_t, 900)") != std::string::npos);
@@ -185,9 +199,16 @@ TEST_CASE("pruning locks writers before selecting and commits deletion with actu
   CHECK(updated[0].statement.find("pruned_ts_i =") <
         updated[0].statement.find("pruned_ts_t = GREATEST"));
   bool saw_delete = false;
+  bool saw_begin = false;
   for (const auto& call : calls) {
     CHECK(call.session == &sql);
-    if (call.kind != "begin") CHECK(call.in_transaction);
+    CHECK(call.in_transaction == saw_begin);
+    if (call.kind == "begin") saw_begin = true;
+    // All range/order/offset candidate reads precede BEGIN. Only the constant
+    // metadata and candidate primary-key lookups are allowed under the lock.
+    if (call.kind == "query" && call.statement.find("ORDER BY") != std::string::npos) {
+      CHECK_FALSE(call.in_transaction);
+    }
     if (starts_with(call.statement, "DELETE")) saw_delete = true;
     if (starts_with(call.statement, "UPDATE")) CHECK(saw_delete);
   }
@@ -197,15 +218,17 @@ TEST_CASE("pruning locks writers before selecting and commits deletion with actu
 TEST_CASE("age selection and deletion share one sampled cutoff and preserve the newest row") {
   Database database;
   SqlSession sql;
-  database.pruning_snapshot();
+  database.rows({{"100"}});
   database.rows({{"1000"}});  // the clock can advance after this snapshot
   database.rows({{"7"}});
   database.rows({{"985", "9"}});
+  database.pruning_locks();
+  database.rows({{"7"}});
   affected = 2;
   CHECK(prune_oplog(sql, 0, 10) == 2);
   REQUIRE(matching("SELECT UNIX_TIMESTAMP()").size() == 1);
   const std::string predicate = "seq < 100 AND (ts_t < 990)";
-  const auto candidates = matching("SELECT seq FROM chimera_meta.oplog WHERE ");
+  const auto candidates = matching("SELECT seq FROM chimera_meta.oplog WHERE seq <");
   const auto timestamps = matching("SELECT ts_t, ts_i FROM chimera_meta.oplog WHERE ");
   const auto deleted = matching("DELETE FROM chimera_meta.oplog WHERE ");
   REQUIRE(candidates.size() == 1);
@@ -215,7 +238,9 @@ TEST_CASE("age selection and deletion share one sampled cutoff and preserve the 
                                     " ORDER BY seq DESC LIMIT 1");
   CHECK(timestamps[0].statement == "SELECT ts_t, ts_i FROM chimera_meta.oplog WHERE " + predicate +
                                     " ORDER BY ts_t DESC, ts_i DESC LIMIT 1");
-  CHECK(deleted[0].statement == "DELETE FROM chimera_meta.oplog WHERE " + predicate);
+  CHECK_FALSE(candidates[0].in_transaction);
+  CHECK_FALSE(timestamps[0].in_transaction);
+  CHECK(deleted[0].statement == "DELETE FROM chimera_meta.oplog WHERE seq <= 7 AND (" + predicate + ")");
   CHECK(replies.empty());
 }
 
@@ -254,6 +279,7 @@ TEST_CASE("missing clock or history metadata refuses pruning before any deletion
     CAPTURE(missing_clock);
     Database database;
     SqlSession sql;
+    database.one_row_plan();
     if (!missing_clock) database.rows({{"1"}});
     database.rows({});
     CHECK_THROWS_AS(prune_oplog(sql, 1, 0), TranslatorError);
@@ -262,6 +288,51 @@ TEST_CASE("missing clock or history metadata refuses pruning before any deletion
     CHECK(matching("ROLLBACK").size() == 1);
     CHECK(replies.empty());
   }
+}
+
+TEST_CASE("an empty oplog or unexpired age policy never locks writers") {
+  for (bool empty : {false, true}) {
+    Database database;
+    SqlSession sql;
+    database.rows({{empty ? "0" : "100"}});
+    if (!empty) database.rows({{"10"}});  // max age exceeds current time
+    CHECK(prune_oplog(sql, 0, 20) == 0);
+    CHECK(matching("BEGIN").empty());
+    CHECK(matching("SELECT id FROM chimera_meta.oplog_clock").empty());
+    CHECK(replies.empty());
+  }
+}
+
+TEST_CASE("a candidate lost before locked verification never deletes or publishes history") {
+  Database database;
+  SqlSession sql;
+  database.one_row_plan();
+  database.pruning_locks();
+  database.rows({});
+  CHECK(prune_oplog(sql, 1, 0) == 0);
+  CHECK(matching("DELETE").empty());
+  CHECK(matching("UPDATE chimera_meta.oplog_history").empty());
+  CHECK(matching("COMMIT").size() == 1);
+  CHECK(replies.empty());
+}
+
+TEST_CASE("commits during planning cannot extend deletion beyond the sampled head") {
+  Database database;
+  SqlSession sql;
+  database.rows({{"100"}});       // sampled before the new commits
+  database.rows({{"200"}});       // newest kept row after concurrent appends
+  database.rows({{"99"}});        // selected below the frozen head
+  database.rows({{"900", "7"}});
+  database.pruning_locks();
+  database.rows({{"99"}});
+  affected = 2;
+  CHECK(prune_oplog(sql, 1, 0) == 2);
+  REQUIRE(matching("SELECT COALESCE(MAX(seq)").size() == 1);
+  const auto deleted = matching("DELETE FROM chimera_meta.oplog");
+  REQUIRE(deleted.size() == 1);
+  CHECK(deleted[0].statement ==
+        "DELETE FROM chimera_meta.oplog WHERE seq <= 99 AND (seq < 100 AND (seq < 200))");
+  CHECK(replies.empty());
 }
 
 TEST_CASE("initialized oplog schema checks its own session without DDL or writer locks") {

@@ -157,6 +157,7 @@ const char kEntryExpr[] =
 
 std::mutex g_wait_mutex;
 std::mutex g_schema_mutex;
+std::mutex g_prune_mutex;
 std::condition_variable g_wait_cv;
 uint64_t g_write_generation = 0;
 
@@ -282,11 +283,61 @@ uint64_t oplog_head(SqlSession& sql) {
 
 uint64_t prune_oplog(SqlSession& sql, uint64_t max_rows, uint64_t max_age_seconds) {
   if (max_rows == 0 && max_age_seconds == 0) return 0;
+  // Only pruning removes oplog rows; trigger writers append immutable events
+  // above the committed head. Serialize pruning passes without blocking those
+  // writers, and do all survivor/candidate scans in autocommit before taking
+  // the clock lock. In particular, OFFSET max_rows must not stall every writer
+  // for a walk over the default 100,000 survivors on each no-op pass.
+  std::lock_guard<std::mutex> pruning(g_prune_mutex);
+  const uint64_t head = oplog_head(sql);
+  if (head == 0) return 0;
+  std::string condition;
+  if (max_age_seconds > 0) {
+    const ResultSet now = sql.query("SELECT UNIX_TIMESTAMP()");
+    if (now.rows.size() != 1 || now.rows[0].size() != 1 || !now.rows[0][0]) {
+      throw internal_error("could not determine the oplog retention cutoff");
+    }
+    const uint64_t seconds = std::strtoull(now.rows[0][0]->c_str(), nullptr, 10);
+    if (seconds > max_age_seconds) {
+      condition = "ts_t < " + std::to_string(seconds - max_age_seconds);
+    }
+  }
+  if (max_rows > 0) {
+    // Count actual retained rows, not sequence distance: rollbacks can leave
+    // arbitrarily large gaps between neighboring committed events.
+    const ResultSet cut = sql.query(
+        "SELECT seq FROM chimera_meta.oplog ORDER BY seq DESC LIMIT 1 OFFSET " +
+        std::to_string(max_rows - 1));
+    if (!cut.rows.empty() && cut.rows[0][0]) {
+      if (!condition.empty()) condition += " OR ";
+      condition += "seq < " + *cut.rows[0][0];
+    }
+  }
+  if (condition.empty()) return 0;
+  // Freeze both the head and age cutoff. Commits during planning only add rows
+  // beyond this range; they can leave the cap temporarily exceeded until the
+  // next pass, but cannot change the selected events or make us over-prune.
+  const std::string where = "seq < " + std::to_string(head) + " AND (" + condition + ")";
+  const ResultSet newest = sql.query(
+      "SELECT seq FROM chimera_meta.oplog WHERE " + where + " ORDER BY seq DESC LIMIT 1");
+  if (newest.rows.empty()) return 0;
+  if (newest.rows.size() != 1 || newest.rows[0].size() != 1 || !newest.rows[0][0]) {
+    throw internal_error("could not determine the last event selected for pruning");
+  }
+  const ResultSet timestamp = sql.query(
+      "SELECT ts_t, ts_i FROM chimera_meta.oplog WHERE " + where +
+      " ORDER BY ts_t DESC, ts_i DESC LIMIT 1");
+  if (timestamp.rows.size() != 1 || timestamp.rows[0].size() != 2 ||
+      !timestamp.rows[0][0] || !timestamp.rows[0][1]) {
+    throw internal_error("could not determine the timestamp of pruned history");
+  }
+
   uint64_t removed = 0;
   sql.begin();
   try {
-    // Serialize with trigger writers and other pruners. The chosen range and
-    // both deletion watermarks then describe exactly the same committed rows.
+    // Only constant-size metadata/primary-key checks and the actual deletion
+    // remain while writers are blocked. No candidate-discovery scan runs under
+    // this lock. Deletion and its two watermarks still commit together.
     const ResultSet clock = sql.query("SELECT id FROM chimera_meta.oplog_clock WHERE id = 1 FOR UPDATE");
     if (clock.rows.size() != 1 || clock.rows[0].size() != 1 || !clock.rows[0][0]) {
       throw internal_error("oplog clock metadata is missing");
@@ -296,54 +347,33 @@ uint64_t prune_oplog(SqlSession& sql, uint64_t max_rows, uint64_t max_age_second
     if (history.rows.size() != 1 || history.rows[0].size() != 1 || !history.rows[0][0]) {
       throw internal_error("oplog history metadata is missing");
     }
-    const uint64_t head = oplog_head(sql);
-    std::string condition;
-    if (max_age_seconds > 0) {
-      const ResultSet now = sql.query("SELECT UNIX_TIMESTAMP()");
-      if (now.rows.size() != 1 || now.rows[0].size() != 1 || !now.rows[0][0]) {
-        throw internal_error("could not determine the oplog retention cutoff");
-      }
-      const uint64_t seconds = std::strtoull(now.rows[0][0]->c_str(), nullptr, 10);
-      if (seconds > max_age_seconds) {
-        condition = "ts_t < " + std::to_string(seconds - max_age_seconds);
-      }
+    const ResultSet candidate = sql.query(
+        "SELECT seq FROM chimera_meta.oplog WHERE seq = " + *newest.rows[0][0] +
+        " AND (" + where + ")");
+    if (candidate.rows.empty()) {
+      // Unexpected external maintenance changed the private oplog. Replan on
+      // a later pass instead of publishing history for an unverified range.
+      sql.commit();
+      return 0;
     }
-    if (max_rows > 0) {
-      // Count actual retained rows, not sequence distance: rollbacks can leave
-      // arbitrarily large gaps between neighboring committed events.
-      const ResultSet cut = sql.query(
-          "SELECT seq FROM chimera_meta.oplog ORDER BY seq DESC LIMIT 1 OFFSET " +
-          std::to_string(max_rows - 1));
-      if (!cut.rows.empty() && cut.rows[0][0]) {
-        if (!condition.empty()) condition += " OR ";
-        condition += "seq < " + *cut.rows[0][0];
-      }
+    if (candidate.rows.size() != 1 || candidate.rows[0].size() != 1 ||
+        candidate.rows[0][0] != newest.rows[0][0]) {
+      throw internal_error("the planned oplog pruning boundary could not be verified");
     }
-    if (!condition.empty() && head != 0) {
-      const std::string where = "seq < " + std::to_string(head) + " AND (" + condition + ")";
-      const ResultSet newest = sql.query(
-          "SELECT seq FROM chimera_meta.oplog WHERE " + where + " ORDER BY seq DESC LIMIT 1");
-      if (!newest.rows.empty() && newest.rows[0][0]) {
-        const ResultSet timestamp = sql.query(
-            "SELECT ts_t, ts_i FROM chimera_meta.oplog WHERE " + where +
-            " ORDER BY ts_t DESC, ts_i DESC LIMIT 1");
-        if (timestamp.rows.size() != 1 || timestamp.rows[0].size() != 2 ||
-            !timestamp.rows[0][0] || !timestamp.rows[0][1]) {
-          throw internal_error("could not determine the timestamp of pruned history");
-        }
-        sql.exec("DELETE FROM chimera_meta.oplog WHERE " + where);
-        removed = sql.affected_rows();
-        if (removed > 0) {
-          const std::string t = *timestamp.rows[0][0], i = *timestamp.rows[0][1];
-          // Assign the increment first: MariaDB evaluates assignments left to
-          // right, and both comparisons must see the previous seconds value.
-          sql.exec("UPDATE chimera_meta.oplog_history SET pruned_seq = GREATEST(pruned_seq, " +
-                   *newest.rows[0][0] + "), pruned_ts_i = CASE WHEN pruned_ts_t < " + t +
-                   " THEN " + i + " WHEN pruned_ts_t = " + t +
-                   " THEN GREATEST(pruned_ts_i, " + i + ") ELSE pruned_ts_i END, "
-                   "pruned_ts_t = GREATEST(pruned_ts_t, " + t + ") WHERE id = 1");
-        }
-      }
+    // Bound the DELETE by the last selected event too, so its range cannot
+    // walk the retained tail while checking the age/count disjunction.
+    sql.exec("DELETE FROM chimera_meta.oplog WHERE seq <= " + *newest.rows[0][0] +
+             " AND (" + where + ")");
+    removed = sql.affected_rows();
+    if (removed > 0) {
+      const std::string t = *timestamp.rows[0][0], i = *timestamp.rows[0][1];
+      // Assign the increment first: MariaDB evaluates assignments left to
+      // right, and both comparisons must see the previous seconds value.
+      sql.exec("UPDATE chimera_meta.oplog_history SET pruned_seq = GREATEST(pruned_seq, " +
+               *newest.rows[0][0] + "), pruned_ts_i = CASE WHEN pruned_ts_t < " + t +
+               " THEN " + i + " WHEN pruned_ts_t = " + t +
+               " THEN GREATEST(pruned_ts_i, " + i + ") ELSE pruned_ts_i END, "
+               "pruned_ts_t = GREATEST(pruned_ts_t, " + t + ") WHERE id = 1");
     }
     sql.commit();
   } catch (...) {

@@ -39,3 +39,9 @@ jobs:
 
       - name: translator unit tests
         run: ./chimera/scripts/build-translator.sh
+
+      - name: build Mongo readiness probe
+        run: ./chimera/scripts/build-health.sh --build-dir chimera/.run/health --test
+
+      - name: verify Mongo readiness replies and deadlines
+        run: python3 chimera/scripts/test-health.py chimera/.run/health/chimeradb-health
