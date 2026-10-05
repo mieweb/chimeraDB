@@ -130,15 +130,6 @@ fenced=$(mongo_eval '
 ')
 check_eq "the stream opened at a write's own time begins with that write" "$fenced" "true"
 
-note "a resume point we no longer hold is refused by name, never skipped over"
-lost=$(mongo_eval '
-  var d = db.getSiblingDB(NS_DB);
-  print(d.runCommand({aggregate: NS_COLL,
-                      pipeline: [{$changeStream: {resumeAfter: {_data: "0000000000000001"}}}],
-                      cursor: {}}).codeName);
-')
-check_eq "a token behind the retained history" "$lost" "ChangeStreamHistoryLost"
-
 note "abandoning a stream kills it like any other cursor"
 gone=$(mongo_eval '
   var d = db.getSiblingDB(NS_DB);
@@ -158,8 +149,8 @@ note "the pruner never empties the oplog, so a resume question stays answerable"
 # than handed the surviving row as if nothing had been missed — the check belongs
 # on every batch, not only when a stream opens, because the pruner runs while
 # cursors are parked. And exactly one row must survive regardless of age, because
-# MIN(seq) is how that very question gets decided; an oplog that pruned itself to
-# nothing would answer "history lost" to a client that had missed nothing at all.
+# the retained row keeps the current head available. History loss itself is
+# decided by the durable deletion watermark, not by gaps in AUTO_INCREMENT.
 #
 # This throws away oplog history, so it runs last.
 BEHIND_OUT="$RUN_DIR/$SERVER_VERSION/changestream-behind.txt"
@@ -183,5 +174,14 @@ check_eq "a parked stream left behind by the pruner" "$(cat "$BEHIND_OUT")" \
 check_eq "rows left once every entry has aged out" \
   "$(chimera_sql -N -B -e "SELECT COUNT(*), MIN(seq) = MAX(seq) FROM chimera_meta.oplog" | tr '\t' ' ')" \
   "1 1"
+
+note "a resume point behind real deleted history is refused by name"
+lost=$(mongo_eval '
+  var d = db.getSiblingDB(NS_DB);
+  print(d.runCommand({aggregate: NS_COLL,
+                      pipeline: [{$changeStream: {resumeAfter: {_data: "0000000000000000"}}}],
+                      cursor: {}}).codeName);
+')
+check_eq "a token behind the retained history" "$lost" "ChangeStreamHistoryLost"
 
 note "change stream demo passed on $SERVER_VERSION"

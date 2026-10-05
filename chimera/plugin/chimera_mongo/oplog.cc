@@ -51,6 +51,21 @@ const char kOplogTable[] =
     " o2 JSON NULL,"
     " KEY ts (ts_t, ts_i)) ENGINE=InnoDB";
 
+// AUTO_INCREMENT gaps are not evidence of lost history: a rolled-back writer
+// consumes a sequence without committing an event. Only committed pruning may
+// advance pruned_*. The separate legacy boundary conservatively describes the
+// unknown prefix of an oplog created before this metadata existed.
+const char kHistoryTable[] =
+    "CREATE TABLE IF NOT EXISTS chimera_meta.oplog_history ("
+    " id TINYINT UNSIGNED NOT NULL PRIMARY KEY,"
+    " pruned_seq BIGINT UNSIGNED NOT NULL,"
+    " pruned_ts_t INT UNSIGNED NOT NULL,"
+    " pruned_ts_i INT UNSIGNED NOT NULL,"
+    " legacy_baseline TINYINT UNSIGNED NOT NULL,"
+    " baseline_seq BIGINT UNSIGNED NOT NULL,"
+    " baseline_ts_t INT UNSIGNED NOT NULL,"
+    " baseline_ts_i INT UNSIGNED NOT NULL) ENGINE=InnoDB";
+
 // `ts_i` is a per-second counter derived under the clock row's lock, which is
 // what makes (ts_t, ts_i) unique and monotonic without a second round trip.
 const char kAppendProcedure[] =
@@ -141,6 +156,8 @@ const char kEntryExpr[] =
     " ',\"wall\":{\"$date\":{\"$numberLong\":\"', ts_t * 1000, '\"}}}')";
 
 std::mutex g_wait_mutex;
+std::mutex g_schema_mutex;
+std::mutex g_prune_mutex;
 std::condition_variable g_wait_cv;
 uint64_t g_write_generation = 0;
 
@@ -150,7 +167,38 @@ constexpr int kPruneIntervalSeconds = 10;
 
 }  // namespace
 
-void install_oplog_schema(SqlSession& sql) {
+void install_oplog_schema(SqlSession& caller) {
+  // All DDL belongs to its own session, even when a Mongo connection has an
+  // explicit chimeraSql transaction open. Serialize freshness detection with
+  // creation: a concurrent installer must not misclassify a fresh oplog as a
+  // legacy one. A crash before seeding metadata takes the conservative path.
+  SqlSession sql;
+  const auto ready = [&sql] {
+    try {
+      const ResultSet rows = sql.query("SELECT id FROM chimera_meta.oplog_history WHERE id = 1");
+      return rows.rows.size() == 1 && rows.rows[0].size() == 1 && rows.rows[0][0].has_value();
+    } catch (const TranslatorError& error) {
+      if (error.code() != 26) throw;
+      return false;
+    }
+  };
+  if (ready()) return;
+  // A legacy caller may already hold the clock or a procedure metadata lock.
+  // Waiting for migration would then wait for this very command to complete.
+  // Check BEFORE the mutex: its owner may itself be waiting on that caller.
+  if (caller.in_transaction()) {
+    throw bad_value("oplog history initialization is required; commit or roll back "
+                    "the current SQL transaction, then retry");
+  }
+  std::lock_guard<std::mutex> guard(g_schema_mutex);
+  if (ready()) return;
+  const ResultSet existing = sql.query(
+      "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'chimera_meta'"
+      " AND table_name = 'oplog'");
+  if (existing.rows.size() != 1 || existing.rows[0].size() != 1 || !existing.rows[0][0]) {
+    throw internal_error("could not determine whether the oplog already exists");
+  }
+  const bool legacy = *existing.rows[0][0] != "0";
   // The owner comes first: a procedure cannot name a definer that does not yet
   // exist. SELECT and TRIGGER are global because collections live in per-database
   // tables created on demand, and a trigger body reading NEW.doc is checked
@@ -163,9 +211,41 @@ void install_oplog_schema(SqlSession& sql) {
   sql.exec("CREATE DATABASE IF NOT EXISTS chimera_meta");
   sql.exec(kClockTable);
   sql.exec(kOplogTable);
+  sql.exec(kHistoryTable);
   sql.exec("INSERT IGNORE INTO chimera_meta.oplog_clock (id, ts_t, ts_i) VALUES (1, 0, 0)");
   sql.exec(kAppendProcedure);
   sql.exec(kAdoptProcedure);
+  // Writers hold the clock lock until commit. Seed the migration boundary from
+  // one committed snapshot, never from the next AUTO_INCREMENT value. The old
+  // pruner always retained its newest row. A nonzero clock with no rows means
+  // history was removed outside that invariant; do not silently bless it.
+  sql.begin();
+  try {
+    const ResultSet clock = sql.query(
+        "SELECT ts_t, ts_i FROM chimera_meta.oplog_clock WHERE id = 1 FOR UPDATE");
+    if (clock.rows.size() != 1 || clock.rows[0].size() != 2 ||
+        !clock.rows[0][0] || !clock.rows[0][1]) {
+      throw internal_error("oplog clock metadata is missing");
+    }
+    if (legacy && (*clock.rows[0][0] != "0" || *clock.rows[0][1] != "0") &&
+        sql.query("SELECT seq FROM chimera_meta.oplog ORDER BY seq LIMIT 1").rows.empty()) {
+      throw internal_error("cannot establish history for an empty legacy oplog with a nonzero clock");
+    }
+    sql.exec(
+        "INSERT IGNORE INTO chimera_meta.oplog_history "
+        "(id, pruned_seq, pruned_ts_t, pruned_ts_i, legacy_baseline, baseline_seq, "
+        "baseline_ts_t, baseline_ts_i) SELECT 1, 0, 0, 0, " +
+        std::string(legacy ? "IF(COALESCE(oldest.seq, 0) > 1, 1, 0)" : "0") +
+        ", " + (legacy ? "COALESCE(oldest.seq - 1, 0), COALESCE(oldest.ts_t, 0), "
+                          "COALESCE(oldest.ts_i, 0)"
+                        : "0, 0, 0") +
+        " FROM (SELECT 1) AS singleton LEFT JOIN "
+        "(SELECT seq, ts_t, ts_i FROM chimera_meta.oplog ORDER BY seq LIMIT 1) AS oldest ON 1 = 1");
+    sql.commit();
+  } catch (...) {
+    sql.rollback();
+    throw;
+  }
 }
 
 void install_oplog_triggers(SqlSession& sql, const Namespace& ns) {
@@ -202,35 +282,103 @@ uint64_t oplog_head(SqlSession& sql) {
 }
 
 uint64_t prune_oplog(SqlSession& sql, uint64_t max_rows, uint64_t max_age_seconds) {
-  uint64_t removed = 0;
+  if (max_rows == 0 && max_age_seconds == 0) return 0;
+  // Only pruning removes oplog rows; trigger writers append immutable events
+  // above the committed head. Serialize pruning passes without blocking those
+  // writers, and do all survivor/candidate scans in autocommit before taking
+  // the clock lock. In particular, OFFSET max_rows must not stall every writer
+  // for a walk over the default 100,000 survivors on each no-op pass.
+  std::lock_guard<std::mutex> pruning(g_prune_mutex);
+  const uint64_t head = oplog_head(sql);
+  if (head == 0) return 0;
+  std::string condition;
   if (max_age_seconds > 0) {
-    // Never delete the newest row, however old it is. `MIN(seq)` is how a
-    // resuming change stream decides whether its token still lies inside the
-    // history we kept (see changestream-plan.md CS3.3), and an idle system whose
-    // last write has aged out would otherwise empty the table and answer
-    // "history lost" to a client that had missed nothing at all. One retained
-    // row costs nothing and keeps the question answerable.
-    sql.exec(
-        "DELETE FROM chimera_meta.oplog WHERE ts_t < UNIX_TIMESTAMP() - " +
-        std::to_string(max_age_seconds) +
-        " AND seq < (SELECT m FROM (SELECT MAX(seq) AS m FROM chimera_meta.oplog) AS newest)");
-    removed += sql.affected_rows();
+    const ResultSet now = sql.query("SELECT UNIX_TIMESTAMP()");
+    if (now.rows.size() != 1 || now.rows[0].size() != 1 || !now.rows[0][0]) {
+      throw internal_error("could not determine the oplog retention cutoff");
+    }
+    const uint64_t seconds = std::strtoull(now.rows[0][0]->c_str(), nullptr, 10);
+    if (seconds > max_age_seconds) {
+      condition = "ts_t < " + std::to_string(seconds - max_age_seconds);
+    }
   }
   if (max_rows > 0) {
-    // Delete by sequence rather than with LIMIT so the cut point is computed
-    // once and the delete stays a single range scan on the primary key. Keeping
-    // `max_rows` rows keeps the newest one for free, so this branch already
-    // satisfies the rule above.
-    ResultSet rows = sql.query(
-        "SELECT COALESCE(MAX(seq), 0) - " + std::to_string(max_rows) +
-        " FROM chimera_meta.oplog");
-    if (!rows.rows.empty() && rows.rows[0][0]) {
-      const long long cut = std::strtoll(rows.rows[0][0]->c_str(), nullptr, 10);
-      if (cut > 0) {
-        sql.exec("DELETE FROM chimera_meta.oplog WHERE seq <= " + std::to_string(cut));
-        removed += sql.affected_rows();
-      }
+    // Count actual retained rows, not sequence distance: rollbacks can leave
+    // arbitrarily large gaps between neighboring committed events.
+    const ResultSet cut = sql.query(
+        "SELECT seq FROM chimera_meta.oplog ORDER BY seq DESC LIMIT 1 OFFSET " +
+        std::to_string(max_rows - 1));
+    if (!cut.rows.empty() && cut.rows[0][0]) {
+      if (!condition.empty()) condition += " OR ";
+      condition += "seq < " + *cut.rows[0][0];
     }
+  }
+  if (condition.empty()) return 0;
+  // Freeze both the head and age cutoff. Commits during planning only add rows
+  // beyond this range; they can leave the cap temporarily exceeded until the
+  // next pass, but cannot change the selected events or make us over-prune.
+  const std::string where = "seq < " + std::to_string(head) + " AND (" + condition + ")";
+  const ResultSet newest = sql.query(
+      "SELECT seq FROM chimera_meta.oplog WHERE " + where + " ORDER BY seq DESC LIMIT 1");
+  if (newest.rows.empty()) return 0;
+  if (newest.rows.size() != 1 || newest.rows[0].size() != 1 || !newest.rows[0][0]) {
+    throw internal_error("could not determine the last event selected for pruning");
+  }
+  const ResultSet timestamp = sql.query(
+      "SELECT ts_t, ts_i FROM chimera_meta.oplog WHERE " + where +
+      " ORDER BY ts_t DESC, ts_i DESC LIMIT 1");
+  if (timestamp.rows.size() != 1 || timestamp.rows[0].size() != 2 ||
+      !timestamp.rows[0][0] || !timestamp.rows[0][1]) {
+    throw internal_error("could not determine the timestamp of pruned history");
+  }
+
+  uint64_t removed = 0;
+  sql.begin();
+  try {
+    // Only constant-size metadata/primary-key checks and the actual deletion
+    // remain while writers are blocked. No candidate-discovery scan runs under
+    // this lock. Deletion and its two watermarks still commit together.
+    const ResultSet clock = sql.query("SELECT id FROM chimera_meta.oplog_clock WHERE id = 1 FOR UPDATE");
+    if (clock.rows.size() != 1 || clock.rows[0].size() != 1 || !clock.rows[0][0]) {
+      throw internal_error("oplog clock metadata is missing");
+    }
+    ResultSet history = sql.query(
+        "SELECT pruned_seq FROM chimera_meta.oplog_history WHERE id = 1 FOR UPDATE");
+    if (history.rows.size() != 1 || history.rows[0].size() != 1 || !history.rows[0][0]) {
+      throw internal_error("oplog history metadata is missing");
+    }
+    const ResultSet candidate = sql.query(
+        "SELECT seq FROM chimera_meta.oplog WHERE seq = " + *newest.rows[0][0] +
+        " AND (" + where + ")");
+    if (candidate.rows.empty()) {
+      // Unexpected external maintenance changed the private oplog. Replan on
+      // a later pass instead of publishing history for an unverified range.
+      sql.commit();
+      return 0;
+    }
+    if (candidate.rows.size() != 1 || candidate.rows[0].size() != 1 ||
+        candidate.rows[0][0] != newest.rows[0][0]) {
+      throw internal_error("the planned oplog pruning boundary could not be verified");
+    }
+    // Bound the DELETE by the last selected event too, so its range cannot
+    // walk the retained tail while checking the age/count disjunction.
+    sql.exec("DELETE FROM chimera_meta.oplog WHERE seq <= " + *newest.rows[0][0] +
+             " AND (" + where + ")");
+    removed = sql.affected_rows();
+    if (removed > 0) {
+      const std::string t = *timestamp.rows[0][0], i = *timestamp.rows[0][1];
+      // Assign the increment first: MariaDB evaluates assignments left to
+      // right, and both comparisons must see the previous seconds value.
+      sql.exec("UPDATE chimera_meta.oplog_history SET pruned_seq = GREATEST(pruned_seq, " +
+               *newest.rows[0][0] + "), pruned_ts_i = CASE WHEN pruned_ts_t < " + t +
+               " THEN " + i + " WHEN pruned_ts_t = " + t +
+               " THEN GREATEST(pruned_ts_i, " + i + ") ELSE pruned_ts_i END, "
+               "pruned_ts_t = GREATEST(pruned_ts_t, " + t + ") WHERE id = 1");
+    }
+    sql.commit();
+  } catch (...) {
+    sql.rollback();
+    throw;
   }
   return removed;
 }

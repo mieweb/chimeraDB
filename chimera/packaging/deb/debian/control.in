@@ -1,0 +1,56 @@
+Source: chimeradb
+Section: database
+Priority: optional
+Maintainer: ChimeraDB contributors <support@mieweb.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+Homepage: https://github.com/mieweb/chimeraDB
+
+Package: chimeradb-common
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}, bash, mariadb-client
+Replaces: chimeradb-plugin-10.11, chimeradb-plugin-11.8
+Description: Mongo-compatible access to MariaDB - administration and SQL assets
+ ChimeraDB adds a Mongo wire listener and bidirectional document/SQL access to
+ MariaDB. This package provides chimeradb setup, status and start, plus the
+ catalog SQL, compiled Mongo health probe and manual. This administration
+ package can connect to a remote server without a local plugin or server.
+ The Mongo listener has no authentication; packaged
+ installations bind it to 127.0.0.1 only.
+ .
+ MongoDB is a trademark of MongoDB, Inc. MariaDB is a trademark of MariaDB plc.
+ ChimeraDB is an independent project and is not affiliated with, endorsed by, or
+ sponsored by MongoDB, Inc. or MariaDB plc. "MongoDB compatibility" describes
+ wire-protocol interoperability, not provenance.
+
+Package: chimeradb-plugin-@SERIES@
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}, chimeradb-common (= ${binary:Version}), mariadb-server (= ${server:Version})
+Provides: chimeradb-plugin (= ${binary:Version})
+Conflicts: chimeradb-plugin
+Replaces: chimeradb-plugin
+Description: Mongo-compatible access to MariaDB @SERIES@ - server plugin
+ The chimera_mongo plugin is built against exactly the MariaDB package named
+ in Depends. Rebuild this plugin when upgrading that server package: its SQL
+ gateway accesses server internals. The Mongo listener has no authentication
+ and binds to 127.0.0.1:27017 by default. Run chimeradb setup after restarting
+ MariaDB; installing this package never connects to or modifies a database.
+ .
+ MongoDB is a trademark of MongoDB, Inc. MariaDB is a trademark of MariaDB plc.
+ ChimeraDB is an independent project and is not affiliated with, endorsed by, or
+ sponsored by MongoDB, Inc. or MariaDB plc. "MongoDB compatibility" describes
+ wire-protocol interoperability, not provenance.
+
+Package: chimeradb
+Architecture: all
+Depends: ${misc:Depends}, chimeradb-common (= ${binary:Version}), chimeradb-plugin (= ${binary:Version})
+Description: Mongo-compatible access to MariaDB - metapackage
+ Installs ChimeraDB administration commands and a matching server plugin.
+ Select the plugin package for your MariaDB series. The Mongo listener has
+ no authentication and is restricted to 127.0.0.1 by default.
+ .
+ MongoDB is a trademark of MongoDB, Inc. MariaDB is a trademark of MariaDB plc.
+ ChimeraDB is an independent project and is not affiliated with, endorsed by, or
+ sponsored by MongoDB, Inc. or MariaDB plc. "MongoDB compatibility" describes
+ wire-protocol interoperability, not provenance.

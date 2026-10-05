@@ -17,17 +17,16 @@ namespace chimera {
 // A page of change events for one collection, oldest first — a change stream has
 // no `{$natural: -1}` form. Filtering is `ns` equality and nothing else, which is
 // the only filter a change stream can ever need, so `compile_filter` stays out
-// of it.
+// of it. Validates retained history after the read and before returning any
+// events, so concurrent pruning cannot be hidden by a later cursor advance.
 OplogBatch read_changestream(SqlSession& sql, const Namespace& ns, uint64_t after_seq,
                              uint64_t limit);
 
 // Turns the parsed start options into the sequence to read strictly after.
 // `startAtOperationTime` is inclusive of events *at* that time, so it resolves to
-// the last sequence strictly before it.
+// the last retained sequence strictly before it, or the durable history floor.
+// Times at/before a deleted event are refused; rollback gaps never imply loss.
 uint64_t resolve_change_stream_start(SqlSession& sql, const ChangeStreamOptions& opts);
-
-// The oldest sequence still retained, or 0 when the oplog has never held a row.
-uint64_t oplog_min_seq(SqlSession& sql);
 
 // Throws ChangeStreamHistoryLost when `after_seq` names a point the pruner has
 // already discarded, so a resuming client is told to resync rather than handed a
@@ -41,5 +40,10 @@ struct OperationTime {
   uint32_t i = 0;
 };
 OperationTime current_operation_time(SqlSession& sql);
+
+// Reads the clock, creating a missing oplog schema through a separate session
+// so its DDL cannot commit a caller's explicit SQL-gateway transaction.
+// Transactional write fences still use the strict current_operation_time above.
+OperationTime current_operation_time_or_initialize(SqlSession& sql);
 
 }  // namespace chimera

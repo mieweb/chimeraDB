@@ -1,5 +1,6 @@
 #include "changestream.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 
@@ -38,12 +39,6 @@ const char kEventExpr[] =
     " '},\"documentKey\":', COALESCE(o2, JSON_OBJECT('_id', JSON_EXTRACT(o, '$._id'))),"
     " '}')";
 
-uint64_t scalar(SqlSession& sql, const std::string& statement) {
-  ResultSet rows = sql.query(statement);
-  if (rows.rows.empty() || !rows.rows[0][0]) return 0;
-  return std::strtoull(rows.rows[0][0]->c_str(), nullptr, 10);
-}
-
 }  // namespace
 
 OplogBatch read_changestream(SqlSession& sql, const Namespace& ns, uint64_t after_seq,
@@ -58,10 +53,17 @@ OplogBatch read_changestream(SqlSession& sql, const Namespace& ns, uint64_t afte
   OplogBatch batch;
   batch.last_seq = after_seq;
   for (const auto& row : rows.rows) {
-    if (!row[0] || !row[1]) continue;
+    if (!row[0] || !row[1]) {
+      throw internal_error("oplog row rendered NULL — kEventExpr regression");
+    }
     batch.last_seq = std::strtoull(row[0]->c_str(), nullptr, 10);
     batch.documents.push_back(from_extjson(*row[1]));
   }
+  // Check after every SELECT, including reads after a park. A prune before or
+  // during the read must be noticed before callers deliver events or advance
+  // their cursor. A prune after this check cannot remove the batch in memory;
+  // racing pruning may conservatively require resync, but cannot hide a gap.
+  require_change_stream_history(sql, after_seq);
   return batch;
 }
 
@@ -69,31 +71,66 @@ uint64_t resolve_change_stream_start(SqlSession& sql, const ChangeStreamOptions&
   switch (opts.start) {
     case ChangeStreamStart::kToken:
       return opts.after_seq;
-    case ChangeStreamStart::kOperationTime:
-      // "at or after" the requested time, so we resume after the last row that
-      // is strictly before it. (t, i) compares lexicographically.
-      return scalar(sql, "SELECT COALESCE(MAX(seq), 0) FROM chimera_meta.oplog WHERE ts_t < " +
-                             std::to_string(opts.ts_t) + " OR (ts_t = " +
-                             std::to_string(opts.ts_t) + " AND ts_i < " +
-                             std::to_string(opts.ts_i) + ")");
+    case ChangeStreamStart::kOperationTime: {
+      // Read the predecessor and durable deletion boundary in one snapshot.
+      // Sequence gaps alone mean nothing: rollbacks consume AUTO_INCREMENTs.
+      ResultSet rows = sql.query(
+          "SELECT before_time.after_seq, h.pruned_seq, h.pruned_ts_t, h.pruned_ts_i, "
+          "h.legacy_baseline, h.baseline_seq, h.baseline_ts_t, h.baseline_ts_i FROM "
+          "(SELECT COALESCE(MAX(seq), 0) AS after_seq FROM chimera_meta.oplog WHERE ts_t < " +
+          std::to_string(opts.ts_t) + " OR (ts_t = " + std::to_string(opts.ts_t) +
+          " AND ts_i < " + std::to_string(opts.ts_i) + ")) AS before_time "
+          "JOIN chimera_meta.oplog_history AS h ON h.id = 1");
+      if (rows.rows.size() != 1 || rows.rows[0].size() != 8 ||
+          std::any_of(rows.rows[0].begin(), rows.rows[0].end(),
+                      [](const auto& value) { return !value; })) {
+        throw internal_error("could not resolve the change-stream operation time");
+      }
+      const Row& row = rows.rows[0];
+      const uint64_t before = std::strtoull(row[0]->c_str(), nullptr, 10);
+      const uint64_t pruned = std::strtoull(row[1]->c_str(), nullptr, 10);
+      const uint32_t pruned_t = static_cast<uint32_t>(std::strtoul(row[2]->c_str(), nullptr, 10));
+      const uint32_t pruned_i = static_cast<uint32_t>(std::strtoul(row[3]->c_str(), nullptr, 10));
+      const bool legacy = *row[4] != "0";
+      const uint64_t baseline = std::strtoull(row[5]->c_str(), nullptr, 10);
+      const uint32_t baseline_t = static_cast<uint32_t>(std::strtoul(row[6]->c_str(), nullptr, 10));
+      const uint32_t baseline_i = static_cast<uint32_t>(std::strtoul(row[7]->c_str(), nullptr, 10));
+      // Time origins are inclusive, so equality with a deleted event is lost.
+      // A legacy boundary names a retained event instead: equality is safe.
+      const bool deleted = pruned != 0 && (opts.ts_t < pruned_t ||
+                           (opts.ts_t == pruned_t && opts.ts_i <= pruned_i));
+      const bool unknown = legacy && (opts.ts_t < baseline_t ||
+                           (opts.ts_t == baseline_t && opts.ts_i < baseline_i));
+      if (deleted || unknown) {
+        throw change_stream_history_lost(
+            "the requested operation time is older than the retained oplog; resync "
+            "(see changestream-plan.md)");
+      }
+      // A safe time may lie between the last deleted event and the oldest
+      // survivor. Its retained predecessor is zero, but resuming after the
+      // deletion watermark includes all events at or after the requested time.
+      return std::max({before, pruned, baseline});
+    }
     case ChangeStreamStart::kHead:
       break;
   }
   return oplog_head(sql);
 }
 
-uint64_t oplog_min_seq(SqlSession& sql) {
-  return scalar(sql, "SELECT COALESCE(MIN(seq), 0) FROM chimera_meta.oplog");
-}
-
 void require_change_stream_history(SqlSession& sql, uint64_t after_seq) {
-  // Resuming from the head of an empty oplog is the ordinary cold start.
-  if (after_seq == 0) return;
-
-  const uint64_t oldest = oplog_min_seq(sql);
-  // An oplog that has never held a row cannot have issued the token being
-  // presented, so the token is as lost as a pruned one.
-  if (oldest != 0 && after_seq + 1 >= oldest) return;
+  const ResultSet rows = sql.query(
+      "SELECT GREATEST(pruned_seq, baseline_seq), "
+      "EXISTS(SELECT 1 FROM chimera_meta.oplog LIMIT 1) "
+      "FROM chimera_meta.oplog_history WHERE id = 1");
+  if (rows.rows.size() != 1 || rows.rows[0].size() != 2 ||
+      !rows.rows[0][0] || !rows.rows[0][1]) {
+    throw internal_error("oplog history metadata is missing");
+  }
+  const uint64_t floor = std::strtoull(rows.rows[0][0]->c_str(), nullptr, 10);
+  // Resume tokens are exclusive: after the last deleted event is still safe.
+  // A never-written oplog cannot have issued a positive token. This existence
+  // check preserves that validation without mistaking sequence gaps for loss.
+  if (after_seq >= floor && (after_seq == 0 || *rows.rows[0][1] != "0")) return;
 
   throw change_stream_history_lost(
       "the resume point is no longer in the oplog; resume from a later point or resync "
@@ -107,6 +144,23 @@ OperationTime current_operation_time(SqlSession& sql) {
   now.t = static_cast<uint32_t>(std::strtoul(rows.rows[0][0]->c_str(), nullptr, 10));
   now.i = static_cast<uint32_t>(std::strtoul(rows.rows[0][1]->c_str(), nullptr, 10));
   return now;
+}
+
+OperationTime current_operation_time_or_initialize(SqlSession& sql) {
+  try {
+    return current_operation_time(sql);
+  } catch (const TranslatorError& error) {
+    // The first ping or no-op delete may precede both the first write and the
+    // pruner's initial pass. Only the SQL adapter's missing-table/database
+    // error justifies bootstrapping; permission/storage failures stay visible.
+    if (error.code() != 26) throw;
+  }
+  // The installer uses its own DDL session, but must see the actual caller to
+  // refuse migration while that caller holds an explicit SQL transaction.
+  install_oplog_schema(sql);
+  // A failed install or retry propagates. Do not manufacture a zero timestamp
+  // or loop indefinitely when the underlying schema cannot be made usable.
+  return current_operation_time(sql);
 }
 
 }  // namespace chimera

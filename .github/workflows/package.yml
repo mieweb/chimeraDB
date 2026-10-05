@@ -1,0 +1,116 @@
+name: package
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "chimera/**"
+      - ".github/workflows/package.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cli:
+    name: CLI / ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: test CLI readiness and client options without a server
+        run: ./chimera/scripts/test-cli.sh
+      - name: test Homebrew interrupted initialization recovery
+        run: python3 chimera/packaging/homebrew/test-service.py
+      - name: test Homebrew reinstall cleanup and source archive provenance
+        run: python3 chimera/packaging/homebrew/test-packaging.py
+      - name: test package manifests and repository key trust
+        if: runner.os == 'Linux'
+        run: ./chimera/packaging/deb/test-input-validation.sh
+
+  linux:
+    needs: cli
+    name: MariaDB ${{ matrix.server }} / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        server: ["10.11", "11.8"]
+        arch: [arm64, amd64]
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build Debian packages
+        run: ./chimera/packaging/deb/build.sh --server "${{ matrix.server }}" --arch "${{ matrix.arch }}"
+      - name: test package installation and removal
+        run: ./chimera/packaging/deb/test.sh --series "${{ matrix.server }}" --arch "${{ matrix.arch }}"
+      - name: build next package revision
+        run: >-
+          ./chimera/packaging/deb/build.sh --server "${{ matrix.server }}" --arch "${{ matrix.arch }}"
+          --revision 2 --output chimera/packaging/dist/upgrade
+          --mariadb-version "$(sed -n 's/^MariaDB package: //p' chimera/packaging/dist/debian/${{ matrix.server }}/${{ matrix.arch }}/build-info.txt)"
+      - name: test package version upgrade and removal
+        run: ./chimera/packaging/deb/test.sh --series "${{ matrix.server }}" --arch "${{ matrix.arch }}" --packages "chimera/packaging/dist/upgrade/${{ matrix.server }}/${{ matrix.arch }}" --previous-packages "chimera/packaging/dist/debian/${{ matrix.server }}/${{ matrix.arch }}"
+      - name: build Docker runtime
+        run: ./chimera/packaging/docker/build.sh --server "${{ matrix.server }}" --arch "${{ matrix.arch }}" --packages "chimera/packaging/dist/debian/${{ matrix.server }}/${{ matrix.arch }}" --tag chimeradb:ci
+      - name: test drivers, change streams and persistent volume
+        run: ./chimera/packaging/docker/test.sh --image chimeradb:ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-${{ matrix.server }}-${{ matrix.arch }}
+          path: chimera/packaging/dist/debian/${{ matrix.server }}/${{ matrix.arch }}/
+          if-no-files-found: error
+
+  debian13:
+    needs: cli
+    name: Debian 13 / MariaDB 11.8 / amd64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build Debian 13 packages
+        run: ./chimera/packaging/deb/build.sh --suite trixie --series 11.8 --arch amd64
+      - name: test Debian 13 package installation and removal
+        run: ./chimera/packaging/deb/test.sh --suite trixie --series 11.8 --arch amd64
+      - name: build next Debian 13 package revision
+        run: >-
+          ./chimera/packaging/deb/build.sh --suite trixie --series 11.8 --arch amd64
+          --revision 2 --output chimera/packaging/dist/debian-trixie-upgrade
+          --mariadb-version "$(sed -n 's/^MariaDB package: //p' chimera/packaging/dist/debian-trixie/11.8/amd64/build-info.txt)"
+      - name: test Debian 13 package version upgrade and removal
+        run: >-
+          ./chimera/packaging/deb/test.sh --suite trixie --series 11.8 --arch amd64
+          --packages chimera/packaging/dist/debian-trixie-upgrade/11.8/amd64
+          --previous-packages chimera/packaging/dist/debian-trixie/11.8/amd64
+      # Shipping Docker images use bookworm; trixie artifacts target native hosts.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-trixie-11.8-amd64
+          path: chimera/packaging/dist/debian-trixie/11.8/amd64/
+          if-no-files-found: error
+
+  homebrew:
+    needs: cli
+    name: Homebrew / MariaDB ${{ matrix.server }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        server: ["10.11", "11.8"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: install supported server dependency
+        run: brew install "mariadb@${{ matrix.server }}"
+      - name: install ChimeraDB through local tap and test
+        run: ./chimera/packaging/homebrew/local-test.sh --server "${{ matrix.server }}"
+      - name: test launchd, reinstall and persistent configuration
+        run: ./chimera/packaging/homebrew/ci-lifecycle.sh --server "${{ matrix.server }}"

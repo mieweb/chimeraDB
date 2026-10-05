@@ -46,6 +46,9 @@ public:
   ResultSet query(const std::string& sql);
   uint64_t affected_rows() const;
 
+  // Last server-reported transaction state; does not issue SQL or take locks.
+  bool in_transaction() const;
+
   // The one and only place a Param becomes SQL text. The local connection has
   // no prepared-statement API, so `?` is substituted here using the server's
   // own escaper — keeping a single audited choke point instead of scattering

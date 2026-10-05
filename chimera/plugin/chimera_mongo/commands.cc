@@ -317,7 +317,7 @@ Bson cursor_reply(int64_t cursor_id, const std::string& ns, const char* batch_na
 // because by now a neighbouring write may have moved the clock on.
 void append_operation_time(Bson& reply, SqlSession& sql,
                            const std::optional<OperationTime>& stamp = std::nullopt) {
-  const OperationTime now = stamp ? *stamp : current_operation_time(sql);
+  const OperationTime now = stamp ? *stamp : current_operation_time_or_initialize(sql);
   bson_append_timestamp(reply.get(), "operationTime", -1, now.t, now.i);
 }
 
@@ -365,10 +365,6 @@ Bson tail_batch(Ctx& ctx, int64_t cursor_id, const Namespace& ns, const TailStat
   const auto deadline = std::chrono::steady_clock::now() +
                         std::chrono::milliseconds(std::max<int64_t>(max_time_ms, 0));
 
-  // Checked every batch, not just on open: the pruner runs while a cursor is
-  // parked, and a gap must be reported rather than skipped over silently.
-  if (tail.change_stream) require_change_stream_history(ctx.sql(), tail.after_seq);
-
   OplogBatch batch;
   uint64_t next_after = tail.after_seq;
   for (;;) {
@@ -376,6 +372,8 @@ Bson tail_batch(Ctx& ctx, int64_t cursor_id, const Namespace& ns, const TailStat
     batch = tail.change_stream
                 ? read_changestream(ctx.sql(), ns, tail.after_seq, wanted)
                 : read_oplog(ctx.sql(), tail.filter.get(), tail.after_seq, wanted, false);
+    // read_changestream checks retained history after its SELECT, including
+    // iterations after a park, before we can deliver or advance over a gap.
     // A short batch means nothing else *matching* exists below the head, so the
     // cursor skips the rows it filtered out rather than rescanning them forever.
     // `head` is sampled before the query, so a write landing in between can leave
@@ -527,6 +525,10 @@ Bson open_change_stream(Ctx& ctx, const std::vector<Bson>& stages) {
   }
   // `aggregate: 1` is a whole-database watch; the argument is a collection name
   // for every form we serve.
+  if (ctx.argument.empty()) {
+    throw not_implemented(
+        "database-level watch (aggregate: 1) is not supported (see changestream-plan.md)");
+  }
   const Namespace ns = ctx.ns();
   if (is_oplog_namespace(ns)) {
     throw not_implemented(
@@ -894,6 +896,9 @@ Bson cmd_find_and_modify(Ctx& ctx) {
 
   Collection collection(ctx.sql(), ctx.ns());
   if (!remove) collection.create(/*error_if_exists=*/false);
+  // Removing from a nonexistent collection is a successful no-op. Its reply
+  // still needs a clock; initialize it before entering the write transaction.
+  if (remove) (void)current_operation_time_or_initialize(ctx.sql());
 
   Bson value;  // the document to report back
   bool have_value = false;
