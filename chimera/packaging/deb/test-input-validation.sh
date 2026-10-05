@@ -105,6 +105,43 @@ cp -R "$base" "$work/manifest-path"
 printf '%064d  ../outside.deb\n' 0 >>"$work/manifest-path/SHA256SUMS"
 reject 'out-of-directory manifest entry' verify "$work/manifest-path"
 
+# Exercise the native harness's actual two package functions without sourcing
+# its destructive top-level host/service workflow. APT is a recording function;
+# no installation, root privilege, systemd, host path or repository is touched.
+sed -n '/^validate_packages() {$/,/^}$/p; /^install_packages() {$/,/^}$/p' \
+  "$HERE/systemd-test.sh" >"$work/native-functions.sh"
+[[ -s $work/native-functions.sh ]]
+source "$work/native-functions.sh"
+declare -F validate_packages >/dev/null
+declare -F install_packages >/dev/null
+series=11.8 arch=amd64 distribution='Debian 12 (bookworm)'
+apt_options=(-y)
+apt-get() { printf '%s\n' "$@" >"$work/native-apt-arguments"; }
+install_packages "$work/debug" --reinstall
+expected_runtime=$(verify "$work/debug" --runtime-files)
+expected_arguments=$(printf '%s\n' -y install --no-install-recommends --reinstall "$expected_runtime")
+[[ $(cat "$work/native-apt-arguments") == "$expected_arguments" ]]
+pass 'native installation delegates validation and installs exactly three runtime packages'
+rm "$work/native-apt-arguments"
+
+cp -R "$base" "$work/symlink"
+rm "$work/symlink/chimeradb-common_0.1.0-1_all.deb"
+ln -s "$base/chimeradb-common_0.1.0-1_all.deb" "$work/symlink/chimeradb-common_0.1.0-1_all.deb"
+manifest "$work/symlink"
+cp -R "$work/debug" "$work/duplicate-debug"
+cp "$work/duplicate-debug/"*dbgsym*.deb "$work/duplicate-debug/another-debug.deb"
+manifest "$work/duplicate-debug"
+cp -R "$base" "$work/alternative-dependency"
+make_package "$work/alternative-dependency" chimeradb-plugin-11.8 amd64 0.1.0-1 \
+  'mariadb-server (= 1:11.8.9+maria~deb12) | unrelated-server'
+manifest "$work/alternative-dependency"
+for fixture in symlink duplicate-debug alternative-dependency unlisted missing; do
+  reject "native validator $fixture input" validate_packages "$work/$fixture"
+  reject "native installation $fixture input" install_packages "$work/$fixture"
+  [[ ! -e $work/native-apt-arguments ]] || { echo 'FAIL: rejected native input reached APT' >&2; exit 1; }
+done
+unset -f apt-get
+
 # The keyring tests exercise GnuPG parsing, including a real bound subkey; a
 # colon-output fixture alone would not verify the export/show-keys interface.
 gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \

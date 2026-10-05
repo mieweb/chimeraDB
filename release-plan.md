@@ -62,14 +62,20 @@ environment. Do not install Debian 12 native artifacts into Debian 13.
 - Repository trust now installs only the pinned MariaDB primary certificate,
   extracted from the upstream multi-key bundle and verified before APT sees it.
   Complete package-manifest equality and runtime package identities are checked
-  before installation; debug symbols stay out of runtime image layers. All **24
+  before installation; debug symbols stay out of runtime image layers. All **35
   real GPG/Debian-archive regressions** pass, both arm64 runtime variants pass
   driver/persistence acceptance, and the updated 11.8 Debian lifecycle passes.
+  The native systemd harness delegates to the same package validator, rechecks
+  before each install and passes exactly three runtime packages to APT. Focused
+  native-harness regressions reject symlinks, duplicate debug artifacts, invalid
+  dependencies and incomplete manifests before any installation can occur.
 - Homebrew retains an initialization marker until server readiness and catalog
-  setup complete, and refuses partial or interrupted initialization. All **seven
-  recovery regressions** and fresh-start/restart staging tests against both real
-  Homebrew MariaDB kegs pass. These focused recovery and package-input checks now
-  run in the package CI workflow.
+  setup complete, and refuses partial or interrupted initialization. It rechecks
+  the data after claiming initialization and checks the marker again when system
+  tables already exist. All **nine recovery/concurrency regressions** and
+  fresh-start/restart staging tests against both real Homebrew MariaDB kegs pass.
+  Both new race tests fail against the previous service wrapper. These focused
+  recovery and package-input checks run in the package CI workflow.
 - The subsequent Docker initialization review also passes: marker acquisition is
   atomic, data is rechecked after the claim, and the existing-volume path rejects
   an initialization that began between its checks. Deterministic container tests

@@ -45,6 +45,7 @@ if name == "mariadbd":
         while True:
             time.sleep(0.02)
 elif name == "mariadb-install-db":
+    event("install-invoked")
     (data / "mysql").mkdir()
     (data / "mysql/partial-data").write_text("preserve me")
     event("install-start")
@@ -66,6 +67,18 @@ elif name != "mariadb":
     sys.exit("unexpected mock command " + name)
 '''
 
+# Pause at a specific top-level shell command without production test hooks.
+# The process has already evaluated earlier commands when the barrier appears.
+PAUSE_HOOK = r'''
+pause_at_command() {
+    if [[ $1 == "$MOCK_PAUSE_COMMAND" && ! -e $MOCK_PAUSED ]]; then
+        : > "$MOCK_PAUSED"
+        until [[ -e $MOCK_CONTINUE ]]; do sleep 0.02; done
+    fi
+}
+trap 'pause_at_command "$BASH_COMMAND"' DEBUG
+'''
+
 
 class InitializationTest(unittest.TestCase):
     def setUp(self):
@@ -75,6 +88,10 @@ class InitializationTest(unittest.TestCase):
         self.data = self.root / "data"
         self.marker = self.data / ".chimera-initializing"
         self.events_file = self.root / "events.jsonl"
+        self.pause_hook = self.root / "pause.bash"
+        self.pause_hook.write_text(PAUSE_HOOK)
+        self.paused = self.root / "paused"
+        self.resume = self.root / "resume"
         maria = self.root / "mariadb"
         prefix = self.root / "chimeradb"
         (maria / "bin").mkdir(parents=True)
@@ -118,6 +135,15 @@ class InitializationTest(unittest.TestCase):
             os.killpg(process.pid, signal.SIGKILL)
             output, _ = process.communicate(timeout=5)
         return output
+
+    def start_paused_before(self, command):
+        process = self.start(BASH_ENV=str(self.pause_hook),
+                             MOCK_PAUSE_COMMAND=command,
+                             MOCK_PAUSED=str(self.paused),
+                             MOCK_CONTINUE=str(self.resume))
+        self.wait_for(self.paused.exists)
+        self.assertIsNone(process.poll())
+        return process
 
     def wait_for(self, predicate):
         deadline = time.monotonic() + 5
@@ -201,6 +227,43 @@ class InitializationTest(unittest.TestCase):
         self.assertEqual(self.count("install-start"), 0)
         self.assertFalse(self.marker.exists())
         self.stop(process)
+
+    def test_delayed_contender_refuses_data_created_after_empty_snapshot(self):
+        contender = self.start_paused_before('[[ -z $existing_entry ]]')
+        winner = self.start()
+        self.wait_for(lambda: self.count("setup-complete") == 1
+                      and not self.marker.exists())
+        self.stop(winner)
+        before = self.events()
+
+        self.resume.touch()
+        output, _ = contender.communicate(timeout=5)
+        self.assertNotEqual(contender.returncode, 0, output)
+        self.assertIn("data directory changed before initialization was claimed", output)
+        self.assertEqual(self.events(), before)
+        self.assertEqual(self.count("install-invoked"), 1)
+        self.assertFalse(self.marker.exists())
+        self.assertEqual((self.data / "mysql/partial-data").read_text(), "preserve me")
+
+    def test_existing_mysql_branch_rechecks_concurrent_initialization_marker(self):
+        contender = self.start_paused_before('[[ ! -d $CHIMERA_DATA_DIR/mysql ]]')
+        winner = self.start(MOCK_INSTALL_MODE="block")
+        self.wait_for(lambda: self.count("install-start") == 1)
+        before = self.events()
+
+        self.resume.touch()
+        self.wait_for(lambda: contender.poll() is not None
+                      or self.count("server-start") > 0)
+        self.assertEqual(self.count("server-start"), 0)
+        output, _ = contender.communicate(timeout=5)
+        self.assertNotEqual(contender.returncode, 0, output)
+        self.assertIn("previous initialization did not finish", output)
+        self.assertEqual(self.events(), before)
+        self.assertEqual(self.count("install-invoked"), 1)
+        self.assertEqual(self.count("server-start"), 0)
+        self.assertTrue(self.marker.exists())
+        self.assertEqual((self.data / "mysql/partial-data").read_text(), "preserve me")
+        self.stop(winner)
 
 
 if __name__ == "__main__":

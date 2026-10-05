@@ -68,45 +68,7 @@ listeners=$(ss -H -ltn '( sport = :3306 or sport = :27017 )') || die 'could not 
 packages=$(cd "$packages" && pwd)
 [[ -z $previous ]] || previous=$(cd "$previous" && pwd)
 validate_packages() {
-  local directory=$1 file package version package_arch common=0 meta=0 plugin=0
-  [[ -f $directory/SHA256SUMS && -f $directory/build-info.txt ]] ||
-    die "missing checksums/build metadata: $directory"
-  [[ $(sed -n 's/^MariaDB series: //p' "$directory/build-info.txt") == "$series" ]] ||
-    die "wrong MariaDB series: $directory"
-  [[ $(sed -n 's/^Architecture: //p' "$directory/build-info.txt") == "$arch" ]] ||
-    die "packages do not match host architecture $arch: $directory"
-  [[ $(sed -n 's/^Distribution: //p' "$directory/build-info.txt") == "$distribution" ]] ||
-    die "packages do not match host distribution $distribution: $directory"
-  # The exact generated manifest must cover every .deb APT will receive; a
-  # valid checksum for only a subset must not permit unverified extra packages.
-  (cd "$directory" && sha256sum --check --strict SHA256SUMS >&2 &&
-    cmp <(sort SHA256SUMS) <(sha256sum ./*.deb | sort)) ||
-    die "checksum manifest mismatch: $directory"
-  local plugins=("$directory/chimeradb-plugin-${series}_"*.deb)
-  [[ ${#plugins[@]} == 1 && -f ${plugins[0]} ]] || die "expected one plugin: $directory"
-  version=$(dpkg-deb -f "${plugins[0]}" Version)
-  [[ $(sed -n 's/^ChimeraDB: //p' "$directory/build-info.txt") == "$version" ]] ||
-    die "ChimeraDB package version does not match build metadata: $directory"
-  local server_version
-  server_version=$(sed -n 's/^MariaDB package: //p' "$directory/build-info.txt")
-  [[ -n $server_version && ${server_version#*:} == "$series".* ]] ||
-    die "invalid MariaDB package metadata: $directory"
-  [[ $(dpkg-deb -f "${plugins[0]}" Depends) == *"mariadb-server (= $server_version)"* ]] ||
-    die "plugin dependency does not match recorded MariaDB package: $directory"
-  for file in "$directory"/*.deb; do
-    package=$(dpkg-deb -f "$file" Package)
-    package_arch=$(dpkg-deb -f "$file" Architecture)
-    case $package in
-      chimeradb) meta=$((meta + 1)); [[ $package_arch == all ]] || die "wrong architecture: $file" ;;
-      chimeradb-common) common=$((common + 1)); [[ $package_arch == all ]] || die "wrong architecture: $file" ;;
-      "chimeradb-plugin-$series") plugin=$((plugin + 1)); [[ $package_arch == "$arch" ]] || die "wrong architecture: $file" ;;
-      "chimeradb-plugin-$series-dbgsym") [[ $package_arch == "$arch" ]] || die "wrong architecture: $file" ;;
-      *) die "unexpected package $package in $directory" ;;
-    esac
-    [[ $(dpkg-deb -f "$file" Version) == "$version" ]] || die "mixed versions: $directory"
-  done
-  [[ $meta == 1 && $common == 1 && $plugin == 1 ]] || die "incomplete package set: $directory"
-  printf '%s\n' "$version"
+  "$HERE/verify-packages.sh" "$1" "$series" "$arch" "$distribution" "${@:2}"
 }
 current_version=$(validate_packages "$packages")
 server_version=$(sed -n 's/^MariaDB package: //p' "$packages/build-info.txt")
@@ -134,9 +96,14 @@ trap diagnose EXIT
 "$HERE/configure-repository.sh" "$series"
 apt_options=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 install_packages() {
-  local directory=$1
+  local directory=$1 files file
+  local runtime_files=()
   shift
-  apt-get "${apt_options[@]}" install --no-install-recommends "$@" "$directory"/*.deb
+  # Revalidate immediately before installation and select only the three
+  # runtime packages. Debug artifacts are verified but never installed.
+  files=$(validate_packages "$directory" --runtime-files) || return
+  while IFS= read -r file; do runtime_files+=("$file"); done <<<"$files"
+  apt-get "${apt_options[@]}" install --no-install-recommends "$@" "${runtime_files[@]}"
 }
 install_packages "$initial_packages"
 apt-get "${apt_options[@]}" install --no-install-recommends python3-pymongo python3-pymysql
