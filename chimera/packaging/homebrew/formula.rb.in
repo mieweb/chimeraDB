@@ -1,0 +1,108 @@
+class @CLASS@ < Formula
+  desc "MongoDB-compatible document store inside MariaDB"
+  homepage "https://github.com/mieweb/chimeraDB"
+  url @URL@
+  version @VERSION@
+  sha256 @SHA256@
+  license "GPL-2.0-only"
+
+  depends_on "bison" => :build
+  depends_on "cmake" => :build
+  depends_on "ninja" => :build
+  depends_on "openssl@3" => :build
+  depends_on "pkgconf" => :build
+  depends_on "mariadb@@SERVER@"
+  depends_on "mongo-c-driver"
+  depends_on :macos
+
+  conflicts_with @CONFLICT@, because: "both install the chimeradb command"
+
+  # The isolated test server opens loopback SQL and Mongo sockets, as MariaDB's
+  # own Homebrew test does. Builds themselves require no network access.
+  allow_network_access! :test
+
+  # The server's private headers must match the installed keg exactly. Homebrew
+  # owns the authenticated URL/checksum; a dependency bump selects new sources.
+  mariadb_source = Formula["mariadb@@SERVER@"].stable
+  resource "mariadb-source" do
+    url mariadb_source.url
+    sha256 mariadb_source.checksum.to_s
+  end
+
+  def install
+    maria = Formula["mariadb@@SERVER@"]
+    ENV["CHIMERA_HOMEBREW_PREFIX"] = HOMEBREW_PREFIX.to_s
+    ENV["CHIMERA_BISON_PREFIX"] = Formula["bison"].opt_prefix.to_s
+    ENV["CHIMERA_OPENSSL_PREFIX"] = Formula["openssl@3"].opt_prefix.to_s
+    resource("mariadb-source").stage do
+      system "bash", buildpath/"chimera/packaging/homebrew/build.sh",
+             "--server", "@SERVER@", "--mariadb-source", Pathname.pwd,
+             "--mariadb-prefix", maria.opt_prefix, "--prefix", prefix,
+             "--build-dir", buildpath/"homebrew-build"
+    end
+    (bin/"chimeradb").write_env_script libexec/"chimeradb",
+      PATH: "#{maria.opt_bin}:#{HOMEBREW_PREFIX}/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      CHIMERA_DEFAULTS_FILE: etc/"#{name}.cnf", CHIMERA_BREW_FORMULA: name
+    (buildpath/"#{name}.cnf").write <<~EOS
+      [client]
+      socket=#{var}/#{name}/mysql.sock
+      [mysqld]
+      basedir=#{maria.opt_prefix}
+      datadir=#{var}/#{name}
+      socket=#{var}/#{name}/mysql.sock
+      pid-file=#{var}/#{name}/mariadbd.pid
+      log-error=#{var}/#{name}/mariadbd.err
+      bind-address=127.0.0.1
+      port=3306
+      plugin-dir=#{opt_lib}/chimeradb/plugin
+      plugin-maturity=experimental
+      plugin-load-add=chimera_mongo
+      chimera-mongo-bind=127.0.0.1
+      chimera-mongo-port=27017
+    EOS
+    # Preserve user edits on reinstall/upgrade, writing changed defaults to .default.
+    etc.install buildpath/"#{name}.cnf"
+    (share/"chimeradb").install "chimera/packaging/homebrew/smoke.sh"
+  end
+
+  service do
+    run opt_libexec/"chimeradb-service"
+    keep_alive true
+    working_dir var
+    log_path var/"log/@NAME@.log"
+    error_log_path var/"log/@NAME@.log"
+    environment_variables PATH: std_service_path_env,
+      CHIMERA_MARIADB_PREFIX: Formula["mariadb@@SERVER@"].opt_prefix,
+      CHIMERA_PREFIX: opt_prefix, CHIMERA_DEFAULTS_FILE: etc/"@NAME@.cnf",
+      CHIMERA_DATA_DIR: var/"@NAME@", CHIMERA_BREW_FORMULA: "@NAME@"
+  end
+
+  def caveats
+    <<~EOS
+      Start ChimeraDB (initializes its own data directory and catalog):
+        brew services start #{name}
+        chimeradb status
+
+      SQL: 127.0.0.1:3306; Mongo: 127.0.0.1:27017.
+      Config: #{etc}/#{name}.cnf
+      Data: #{var}/#{name} (preserved on uninstall).
+      The service initializes this dedicated data directory; keep the datadir
+      setting at this path. Port and listener settings can be customized.
+      The Mongo listener has no authentication; keep it on loopback.
+      Do not also start mariadb@@SERVER@ on these ports.
+
+      After upgrading mariadb@@SERVER@, rebuild this source-only plugin:
+        brew reinstall #{name}
+        brew services restart #{name}
+      Its service checks the MariaDB version and keg revision before loading the plugin.
+
+      Stop this service before uninstalling: brew services stop #{name}
+    EOS
+  end
+
+  test do
+    system "bash", share/"chimeradb/smoke.sh", "--server", "@SERVER@",
+           "--mariadb-prefix", Formula["mariadb@@SERVER@"].opt_prefix,
+           "--prefix", prefix, "--work-dir", testpath
+  end
+end

@@ -1,10 +1,64 @@
 # Change Streams Plan — `$changeStream` served from the M5 oplog
 
-**Status:** specced 2026-08-10, not started.
+**Status:** implemented; release hardening verified 2026-10-04 on MariaDB 10.11.18 and 11.8.8.
 **Owner:** unassigned.
 **Parent:** [chimeraDB-plan.md § Milestone 5](chimeraDB-plan.md#milestone-5--oplog--tailable-cursors-the-meteor-enabler) — this is M5's sequel, not a rewrite of it.
 
 ---
+
+The release pass checks retention after every stream read, including reads after
+parking and cursors opened on an empty oplog. NULL event rendering now fails
+explicitly, and database-wide watches return the documented unsupported error.
+PR #8 additionally replaces sequence-gap inference with durable deletion records:
+rolled-back trigger inserts may consume sequence numbers without losing history.
+Pruning records the actual removed sequence/time atomically, and row limits count
+committed rows. A separate conservative migration boundary preserves access to
+retained legacy events when earlier pruning cannot be reconstructed. Legacy setup
+refuses an active caller transaction with a commit-or-rollback retry message,
+avoiding a wait on that caller's own locks without committing its transaction.
+
+The subsequent PR #8 summary review moves retention discovery outside the writer
+critical section. Pruners serialize with each other, freeze their candidate range,
+then revalidate its boundary before atomically deleting and recording history.
+A no-op pass never takes the writer lock. Both full native suites now pass **118
+unit cases** and all nine differential specs per series. The isolated regression
+holds the clock row in a separate connection and observes a completed no-op
+candidate scan; the previous plugin fails this negative control. Evidence is in
+`chimera/.run/review-pr8/native-summary-10.11.log`, `native-summary-11.8.log`
+and `pruner-scan-negative.log`.
+
+The rollback-gap follow-up at `f660b25` passes **115 unit cases**, both full native suites and all nine
+differential specs per series. The isolated
+[rollback regression](chimera/scripts/test-changestream-rollback.sh) covers
+initial/interior gaps, real and no-op pruning, restart persistence, legacy
+migration and transaction preservation; the previous plugin fails its initial-gap
+negative control. Evidence is in `chimera/.run/review-pr8/native-watermark-10.11.log`
+and `native-watermark-11.8.log`.
+
+The full native suite passes on both server series at code commit `5f78542`:
+**93 unit cases**, the parked-prune
+regression in [test-changestream-regressions.sh](chimera/scripts/test-changestream-regressions.sh),
+SQL/wire demos and **all nine MongoDB differential specs**. Local evidence is in
+`chimera/.run/release/native-10.11-isolated-clock.log` and
+`native-11.8-isolated-clock.log`.
+
+Clean installation testing also exposed a first-ping failure before any document
+write: `chimera_meta.oplog_clock` did not yet exist. The helper now bootstraps missing
+metadata in a **separate `SqlSession`** and retries the clock read in the caller's
+session. Initialization DDL therefore cannot implicitly commit a SQL gateway
+transaction. Deterministic tests verify the separate session, the existing-clock
+path, propagated initialization/read errors and the no-DDL transactional helper.
+Fresh ping is checked before writes in packaging acceptance. Both staged Homebrew
+starts and clean CI Homebrew source installs/lifecycle tests pass, as do all four
+native Linux package/Docker combinations (10.11/11.8 × arm64/amd64) in the
+[final package CI run](https://github.com/mieweb/chimeraDB/actions/runs/37214386998).
+See [release-plan.md](release-plan.md) for distribution gates still open. The
+sections below retain the original implementation rationale and completed checklist.
+
+Deployment acceptance also passes on the supplied Intel Proxmox LXC: both Docker
+series and native Debian 13/MariaDB 11.8.6 exercise SQL-triggered change streams
+through real drivers. Both local Homebrew installations now pass their fresh-start
+and persistence tests. The updated nine-job package matrix passes at `d7bd90e`.
 
 ## 1. Why this exists (read this first)
 
@@ -218,15 +272,27 @@ reach it. Model the tests on [test_oplog.cpp](chimera/tests/unit/test_oplog.cpp)
 - [x] **CS3.2** Reply shape: `nextBatch` of events, `cursor.id` unchanged,
   `cursor.postBatchResumeToken` = token of the post-batch `after_seq`, top-level
   `operationTime`. This is what lets the driver resume correctly across quiet periods.
-- [x] **CS3.3** History-lost: on open (CS2.3) *and* on every `getMore`, if
-  `after_seq + 1 < MIN(seq)` in `chimera_meta.oplog` → error
-  `{ok: 0, code: 286, codeName: "ChangeStreamHistoryLost", errmsg: …}`. Meteor is built
-  to recover from exactly this (drops token, resyncs). Never silently skip the gap.
+- [x] **CS3.3** History-lost: on open (CS2.3) and after every event read, compare
+  the resume sequence with the durable pruning watermark. A sequence below the
+  highest actually deleted sequence returns
+  `{ok: 0, code: 286, codeName: "ChangeStreamHistoryLost", errmsg: …}`; equality is
+  safe for resume-after. An inclusive operation-time start at or before the
+  greatest deleted timestamp also returns 286. Rollback can consume
+  `AUTO_INCREMENT` values without losing an event, so `MIN(seq)` and sequence
+  gaps cannot establish that pruning occurred. Meteor handles 286 by resyncing.
 - [x] **CS3.4** Make the 286 rule airtight against pruning: [`prune_oplog`](chimera/plugin/chimera_mongo/oplog.cc)
-  must always leave **at least the newest row** (both the row-count and the age branch),
-  so `MIN(seq)` exists whenever anything was ever written and the CS3.3 predicate is
-  decidable. An empty-since-birth oplog receiving any token is also 286 (a token cannot
-  legitimately exist). Extend the pruner knob docs accordingly.
+  records the highest sequence and timestamp actually removed in the same
+  transaction as deletion. No-op pruning leaves that state unchanged. Both limits
+  still leave **at least the newest row**, and the row limit counts retained rows
+  rather than sequence distance. Candidate scans run before acquiring the writer
+  clock; a no-op pass never takes that lock. A pruning-only mutex protects the
+  plan, and deletion revalidates its frozen boundary under the clock lock before
+  committing the actual deletions and watermarks together. Writes arriving
+  during planning remain for a later retention pass. Fresh databases begin with
+  no recorded loss.
+  Legacy databases without pruning records retain an explicit conservative
+  boundary for uncertain earlier history while allowing access to retained events;
+  that migration boundary is separate from the record of actual deletions.
 - [x] **CS3.5** `killCursors` already kills tail cursors via the registry — add a spec
   assertion, don't assume. Asserted twice: in the differential spec, where both servers
   agree the following `getMore` is `CursorNotFound`, and in demo-changestream.sh.
@@ -237,7 +303,10 @@ Scope-check against CS0.4 findings first.
 
 - [x] **CS4.1** Helper in the plugin: current `(ts_t, ts_i)` read from
   `chimera_meta.oplog_clock` (one indexed-PK row; inside the caller's session). Used as
-  `operationTime` in replies.
+  `operationTime` in replies. The first-read helper bootstraps a missing clock in a
+  separate session before retrying, preserving any caller transaction. Ordinary
+  transactional clock reads never run schema DDL; unrelated SQL errors and failed
+  initialization/retries propagate. These paths have deterministic unit coverage.
 - [x] **CS4.2** `ping` reply gains `operationTime` — Meteor uses it twice (start-time pin
   §2.2, caught-up floor §2.5-adjacent). Cheap, unconditional.
 - [x] **CS4.3** Write replies (`insert`, `update`, `delete`, `findAndModify` if/where it
@@ -275,7 +344,8 @@ Scope-check against CS0.4 findings first.
   therefore opens its streams before the writes they observe, and replay is asserted
   against chimera directly in demo-changestream.sh.
 - [x] **CS5.3** Unit + differential + existing suites green on both versions
-  (`chimera/scripts/test.sh --server 10.11` and `--server 11.8`), 8/8 + new spec.
+  (`chimera/scripts/test.sh --server 10.11` and `--server 11.8`), all nine differential
+  specs including change streams; the release hardening run also passes 93 unit cases.
 
 ### Phase 6 — Meteor 3.5 acceptance (the actual bar, mirrors M6)
 

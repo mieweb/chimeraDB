@@ -1,0 +1,23 @@
+cmake_minimum_required(VERSION 3.20)
+project(chimeradb_health C)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(BSON QUIET IMPORTED_TARGET bson2)
+if(NOT BSON_FOUND)
+  pkg_check_modules(BSON REQUIRED IMPORTED_TARGET libbson-1.0)
+endif()
+add_executable(chimeradb-health main.c)
+target_link_libraries(chimeradb-health PRIVATE PkgConfig::BSON)
+target_compile_options(chimeradb-health PRIVATE -Wall -Wextra -Werror)
+set_target_properties(chimeradb-health PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+
+# Packaging builds only the installed helper. The deterministic resolver test
+# can be enabled by the server-independent health test build.
+option(BUILD_TESTING "Build health helper regression tests" OFF)
+if(BUILD_TESTING)
+  enable_testing()
+  add_executable(test-health-addresses test-addresses.c)
+  target_link_libraries(test-health-addresses PRIVATE PkgConfig::BSON)
+  target_compile_options(test-health-addresses PRIVATE -Wall -Wextra -Werror)
+  set_target_properties(test-health-addresses PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+  add_test(NAME health-address-fallback COMMAND test-health-addresses)
+endif()
