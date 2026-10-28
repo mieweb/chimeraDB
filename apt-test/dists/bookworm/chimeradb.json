@@ -1,0 +1,39 @@
+{
+  "architecture": "amd64",
+  "mariadb_series": "10.11",
+  "package_sets": [
+    {
+      "build_info": "ChimeraDB: 0.1.0-3\nMariaDB package: 1:10.11.19-0+deb12u1\nMariaDB series: 10.11\nArchitecture: amd64\nDistribution: Debian 12 (bookworm)\nSOURCE_DATE_EPOCH: 1793203326\n",
+      "packages": [
+        {
+          "architecture": "amd64",
+          "filename": "pool/bookworm/0.1.0-3/chimeradb-common_0.1.0-3_amd64.deb",
+          "package": "chimeradb-common",
+          "sha256": "32da3b4d4916e3fa4af14b4664378d0678877deaaafab60190096a531cbd8a23",
+          "size": 10672,
+          "version": "0.1.0-3"
+        },
+        {
+          "architecture": "amd64",
+          "filename": "pool/bookworm/0.1.0-3/chimeradb-plugin-10.11_0.1.0-3_amd64.deb",
+          "package": "chimeradb-plugin-10.11",
+          "sha256": "1ec7c706ed694d476fe45998bfa6491c94fc09ea41daa295ce630f2a4492d21a",
+          "size": 151616,
+          "version": "0.1.0-3"
+        },
+        {
+          "architecture": "all",
+          "filename": "pool/bookworm/0.1.0-3/chimeradb_0.1.0-3_all.deb",
+          "package": "chimeradb",
+          "sha256": "d5d00c72b95eb82dff0ce8fac5c060e05e7d293cbf45c5120ac0d47dc4cbe715",
+          "size": 2084,
+          "version": "0.1.0-3"
+        }
+      ],
+      "source_ref": "847e9f61e4f7790e286eb2f639bf8547eb4f1937",
+      "version": "0.1.0-3"
+    }
+  ],
+  "schema": 1,
+  "suite": "bookworm"
+}

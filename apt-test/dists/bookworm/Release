@@ -1,0 +1,13 @@
+Origin: ChimeraDB Test
+Label: ChimeraDB Unsigned Test
+Suite: bookworm
+Codename: bookworm
+Date: Wed, 28 Oct 2026 16:23:33 +0000
+Architectures: amd64
+Components: main
+Acquire-By-Hash: yes
+Description: Temporary unsigned ChimeraDB test for Debian bookworm
+SHA256:
+ 9fbee2a6d483f0fad3d8ebcc4fc89e116fb22b74f6e0b6bcfde75b5eb5403f94             1410 chimeradb.json
+ a38c8faeb02fae1aea8b5ee59a4a0fb1a138c736cf8e9fb73ca408f093f3a8ea             3950 main/binary-amd64/Packages
+ bc6486834cdb986dc25b6600dd35e5c90345ecbf64a5588fb435aa36808a7589             1408 main/binary-amd64/Packages.gz

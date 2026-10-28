@@ -1,0 +1,39 @@
+{
+  "architecture": "amd64",
+  "mariadb_series": "11.8",
+  "package_sets": [
+    {
+      "build_info": "ChimeraDB: 0.1.0-3\nMariaDB package: 1:11.8.6-0+deb13u1\nMariaDB series: 11.8\nArchitecture: amd64\nDistribution: Debian 13 (trixie)\nSOURCE_DATE_EPOCH: 1793203326\n",
+      "packages": [
+        {
+          "architecture": "amd64",
+          "filename": "pool/trixie/0.1.0-3/chimeradb-common_0.1.0-3_amd64.deb",
+          "package": "chimeradb-common",
+          "sha256": "77cfef585cf92ae8f6cac0f1c521bcce481fb0481d2ab26c8e7a1801b976d0eb",
+          "size": 10648,
+          "version": "0.1.0-3"
+        },
+        {
+          "architecture": "amd64",
+          "filename": "pool/trixie/0.1.0-3/chimeradb-plugin-11.8_0.1.0-3_amd64.deb",
+          "package": "chimeradb-plugin-11.8",
+          "sha256": "1257583a15a50239be9678e2167f981df3bf44dd90e43a90f5b351b3a81f6653",
+          "size": 177460,
+          "version": "0.1.0-3"
+        },
+        {
+          "architecture": "all",
+          "filename": "pool/trixie/0.1.0-3/chimeradb_0.1.0-3_all.deb",
+          "package": "chimeradb",
+          "sha256": "0a441ca92141e6151995f60d8fe17ed016e955ac29067f08866ae7105924fee7",
+          "size": 2080,
+          "version": "0.1.0-3"
+        }
+      ],
+      "source_ref": "847e9f61e4f7790e286eb2f639bf8547eb4f1937",
+      "version": "0.1.0-3"
+    }
+  ],
+  "schema": 1,
+  "suite": "trixie"
+}

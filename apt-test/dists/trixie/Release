@@ -1,0 +1,13 @@
+Origin: ChimeraDB Test
+Label: ChimeraDB Unsigned Test
+Suite: trixie
+Codename: trixie
+Date: Wed, 28 Oct 2026 16:23:33 +0000
+Architectures: amd64
+Components: main
+Acquire-By-Hash: yes
+Description: Temporary unsigned ChimeraDB test for Debian trixie
+SHA256:
+ 1351e42cf743b02006602fcaf62c3ad5f4cdf054fd669ea3888c2980c13d626e             1394 chimeradb.json
+ 85f84642b8e1a0d6170ddc2a31ac9b04e30f3221b9ee2fb5ae34bd5ba8ece0e3             3947 main/binary-amd64/Packages
+ ebf482cc852590ee12d96682b226328b30bbd23fb1227a1bf5ced047b92e1204             1409 main/binary-amd64/Packages.gz

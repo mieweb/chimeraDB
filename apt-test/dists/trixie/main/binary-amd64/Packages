@@ -1,0 +1,83 @@
+Package: chimeradb
+Version: 0.1.0-3
+Architecture: all
+Maintainer: ChimeraDB contributors <support@mieweb.com>
+Installed-Size: 9
+Depends: chimeradb-common (= 0.1.0-3), chimeradb-plugin (= 0.1.0-3)
+Filename: pool/trixie/0.1.0-3/chimeradb_0.1.0-3_all.deb
+Size: 2080
+MD5sum: e7a75ce6abb9f83b0dd33253d45b0452
+SHA1: e12497256ddab0b0dd7be20a91c342687e70d387
+SHA256: 0a441ca92141e6151995f60d8fe17ed016e955ac29067f08866ae7105924fee7
+Section: database
+Priority: optional
+Homepage: https://github.com/mieweb/chimeraDB
+Description: Mongo-compatible access to MariaDB - metapackage
+ Installs ChimeraDB administration commands and a matching server plugin.
+ Select the plugin package for your MariaDB series. The Mongo listener has
+ no authentication and is restricted to 127.0.0.1 by default.
+ .
+ MongoDB is a trademark of MongoDB, Inc. MariaDB is a trademark of MariaDB plc.
+ ChimeraDB is an independent project and is not affiliated with, endorsed by, or
+ sponsored by MongoDB, Inc. or MariaDB plc. "MongoDB compatibility" describes
+ wire-protocol interoperability, not provenance.
+
+Package: chimeradb-common
+Source: chimeradb
+Version: 0.1.0-3
+Architecture: amd64
+Maintainer: ChimeraDB contributors <support@mieweb.com>
+Installed-Size: 40
+Depends: libbson-1.0-0t64 (>= 1.30.4), libc6 (>= 2.34), bash, mariadb-client
+Replaces: chimeradb-plugin-10.11, chimeradb-plugin-11.8
+Filename: pool/trixie/0.1.0-3/chimeradb-common_0.1.0-3_amd64.deb
+Size: 10648
+MD5sum: 99c211b4b194937023d97a1bd7b4d249
+SHA1: 0f423d8c63b2f3c6b7f8901dec6d2e773f33913d
+SHA256: 77cfef585cf92ae8f6cac0f1c521bcce481fb0481d2ab26c8e7a1801b976d0eb
+Section: database
+Priority: optional
+Homepage: https://github.com/mieweb/chimeraDB
+Description: Mongo-compatible access to MariaDB - administration and SQL assets
+ ChimeraDB adds a Mongo wire listener and bidirectional document/SQL access to
+ MariaDB. This package provides chimeradb setup, status and start, plus the
+ catalog SQL, compiled Mongo health probe and manual. This administration
+ package can connect to a remote server without a local plugin or server.
+ The Mongo listener has no authentication; packaged
+ installations bind it to 127.0.0.1 only.
+ .
+ MongoDB is a trademark of MongoDB, Inc. MariaDB is a trademark of MariaDB plc.
+ ChimeraDB is an independent project and is not affiliated with, endorsed by, or
+ sponsored by MongoDB, Inc. or MariaDB plc. "MongoDB compatibility" describes
+ wire-protocol interoperability, not provenance.
+
+Package: chimeradb-plugin-11.8
+Source: chimeradb
+Version: 0.1.0-3
+Architecture: amd64
+Maintainer: ChimeraDB contributors <support@mieweb.com>
+Installed-Size: 522
+Depends: libbson-1.0-0t64 (>= 1.30.4), libc6 (>= 2.38), libgcc-s1 (>= 3.0), libstdc++6 (>= 13.1), chimeradb-common (= 0.1.0-3), mariadb-server (= 1:11.8.6-0+deb13u1)
+Conflicts: chimeradb-plugin
+Replaces: chimeradb-plugin
+Provides: chimeradb-plugin (= 0.1.0-3)
+Filename: pool/trixie/0.1.0-3/chimeradb-plugin-11.8_0.1.0-3_amd64.deb
+Size: 177460
+MD5sum: 5aeac7af923bb6daed51484243ecec94
+SHA1: 472582ebe4e7977b45e6254d6cfeebc2ae2bf1a9
+SHA256: 1257583a15a50239be9678e2167f981df3bf44dd90e43a90f5b351b3a81f6653
+Section: database
+Priority: optional
+Homepage: https://github.com/mieweb/chimeraDB
+Description: Mongo-compatible access to MariaDB 11.8 - server plugin
+ The chimera_mongo plugin is built against exactly the MariaDB package named
+ in Depends. Rebuild this plugin when upgrading that server package: its SQL
+ gateway accesses server internals. The Mongo listener has no authentication
+ and binds to 127.0.0.1:27017 by default. Run chimeradb setup after restarting
+ MariaDB; installing this package never connects to or modifies a database.
+ .
+ MongoDB is a trademark of MongoDB, Inc. MariaDB is a trademark of MariaDB plc.
+ ChimeraDB is an independent project and is not affiliated with, endorsed by, or
+ sponsored by MongoDB, Inc. or MariaDB plc. "MongoDB compatibility" describes
+ wire-protocol interoperability, not provenance.
+

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChimeraDB unsigned APT test</title>
+<style>body{max-width:760px;margin:3rem auto;padding:0 1rem;font:17px/1.6 system-ui;color:#182330}h1{line-height:1.2}pre{overflow:auto;padding:1rem;background:#eef2f6}strong{color:#922700}a{color:#134c9c}code{font-size:.9em}</style>
+<h1>ChimeraDB unsigned APT test</h1>
+<p><strong>Temporary test repository. Use only on disposable Debian test machines.</strong></p>
+<p>This feed contains unsigned repository metadata. The trust override below applies only to this test source. The production signed repository is pending setup.</p>
+<p>Packages: <code>0.1.0-3</code>, amd64 only. Debian 12 (bookworm) uses MariaDB 10.11; Debian 13 (trixie) uses MariaDB 11.8.</p>
+<h2>Test installation</h2>
+<p>Run as root on a disposable Debian 12 or 13 amd64 machine:</p>
+<pre>apt-get update
+apt-get install -y ca-certificates
+. /etc/os-release
+case "$ID:$VERSION_CODENAME:$(dpkg --print-architecture)" in
+  debian:bookworm:amd64|debian:trixie:amd64) ;;
+  *) echo 'Unsupported test host'; exit 1 ;;
+esac
+cat &gt; /etc/apt/sources.list.d/chimeradb-test.sources &lt;&lt;EOF
+Types: deb
+URIs: https://mieweb.github.io/chimeraDB/apt-test
+Suites: $VERSION_CODENAME
+Components: main
+Architectures: amd64
+Trusted: yes
+EOF
+apt-get update --error-on=any
+apt-get install chimeradb
+systemctl restart mariadb
+chimeradb setup
+chimeradb status</pre>
+<p>Removing <code>/etc/apt/sources.list.d/chimeradb-test.sources</code> and running <code>apt-get update</code> removes the test feed. Installed packages and database data remain.</p>
+<p>Build source: <a href="https://github.com/mieweb/chimeraDB/commit/847e9f61e4f7790e286eb2f639bf8547eb4f1937">847e9f6</a>. <a href="https://github.com/mieweb/chimeraDB/pull/9">Signed publishing proposal</a>.</p>
+</html>
