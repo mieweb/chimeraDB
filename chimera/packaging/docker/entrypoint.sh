@@ -30,6 +30,13 @@ if [[ ! -d $datadir/mysql ]]; then
     MARIADB_ROOT_PASSWORD=$(cat "$MARIADB_ROOT_PASSWORD_FILE")
   fi
   [[ -n ${MARIADB_ROOT_PASSWORD:-} ]] || die 'set MARIADB_ROOT_PASSWORD (or _FILE) for an empty volume'
+  if [[ -n ${MONGO_INITDB_ROOT_PASSWORD_FILE:-} ]]; then
+    [[ -z ${MONGO_INITDB_ROOT_PASSWORD:-} ]] || die 'set MONGO_INITDB_ROOT_PASSWORD or _FILE, not both'
+    MONGO_INITDB_ROOT_PASSWORD=$(cat "$MONGO_INITDB_ROOT_PASSWORD_FILE")
+  fi
+  MONGO_INITDB_ROOT_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}
+  printf '%s\n' "$MONGO_INITDB_ROOT_PASSWORD" | chimeradb-mongo-user --user root --validate-password ||
+    die 'Mongo password must satisfy SASLprep; set MONGO_INITDB_ROOT_PASSWORD to a valid separate password'
   [[ -z $(find "$datadir" -mindepth 1 -maxdepth 1 ! -name lost+found -print -quit) ]] ||
     die 'data directory is nonempty but has no mysql system tables; refusing to initialize over it'
   chown mysql:mysql "$datadir"
@@ -74,6 +81,8 @@ SQL
   fi
   unset password_sql
   chimeradb setup --protocol=socket --socket="$socket" --user=root
+  printf '%s\n' "$MONGO_INITDB_ROOT_PASSWORD" | chimeradb-mongo-user --user root --password-stdin -- \
+    --no-defaults --protocol=socket --socket="$socket" --user=root
   mariadb-admin --no-defaults --socket="$socket" --user=root shutdown
   wait "$init_pid"
   trap - EXIT TERM INT
@@ -82,5 +91,5 @@ fi
 # A competing initializer may have created mysql/ after our first marker check,
 # causing us to take the existing-volume path. Never start over its partial data.
 require_complete_initialization
-unset MARIADB_ROOT_PASSWORD MARIADB_ROOT_PASSWORD_FILE
+unset MARIADB_ROOT_PASSWORD MARIADB_ROOT_PASSWORD_FILE MONGO_INITDB_ROOT_PASSWORD MONGO_INITDB_ROOT_PASSWORD_FILE
 exec gosu mysql "$@"

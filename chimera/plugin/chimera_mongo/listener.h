@@ -16,7 +16,8 @@ namespace chimera {
 // from plugin init/deinit without any locking against the server.
 class Listener {
 public:
-  Listener(std::string bind_address, uint16_t port);
+  Listener(std::string bind_address, uint16_t port, bool authentication = true,
+           std::string tls_cert = "", std::string tls_key = "");
   ~Listener();
 
   Listener(const Listener&) = delete;
@@ -33,6 +34,8 @@ private:
   const std::string bind_address_;
   const uint16_t port_;
   ServerIdentity identity_;
+  std::string tls_cert_, tls_key_;
+  void* tls_context_ = nullptr;
 
   int listen_fd_ = -1;
   std::atomic<bool> stopping_{false};

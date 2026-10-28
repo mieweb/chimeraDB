@@ -4,6 +4,7 @@ services:
     image: ${CHIMERA_IMAGE:?Set CHIMERA_IMAGE to the image built for your server series and architecture}
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?Set a SQL root password for the new volume}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?Set a Mongo root password for the new volume}
     ports:
       - "127.0.0.1:${CHIMERA_SQL_PORT:-3306}:3306"
       - "127.0.0.1:${CHIMERA_MONGO_PORT:-27017}:27017"

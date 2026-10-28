@@ -22,6 +22,7 @@ const ServerIdentity& gateway_identity() {
   static const ServerIdentity identity = [] {
     ServerIdentity id;
     id.host = "chimera-sql-gateway";
+    id.authentication = false;
     bson_oid_init(&id.process_id, nullptr);
     return id;
   }();
@@ -123,7 +124,9 @@ std::string run_mongo_gateway(const std::string& db, const std::string& statemen
   }
   const ShellCommand command = build_shell_command(parse_shell_call(statement));
 
+  const auto caller = SqlSession::caller_identity();
   ConnectionState state(gateway_identity(), 0);
+  state.trust_sql_caller(caller.first, caller.second, SqlSession::caller_role());
   Bson reply = run_command(command.command, db, state);
 
   switch (command.result) {

@@ -29,8 +29,8 @@ SqlGatewayResult run_sql_gateway(SqlSession& sql, const std::string& statement);
 // the next statement instead of at the next restart.
 void set_sql_gateway_write_flag(const char* flag);
 
-// Set once at plugin start: when the listener accepts non-loopback connections
-// (chimera_mongo_insecure_bind), the gateway refuses every statement. An
+// Set once at plugin start: an unauthenticated non-loopback listener refuses
+// every SQL gateway statement, even with the explicit insecure-bind opt-in. An
 // unauthenticated socket that can reach `{chimeraSql: …}` can read the whole
 // server, not just collection tables — a wider blast radius than documents
 // (https://github.com/mieweb/chimeraDB/issues/5, stage 1).

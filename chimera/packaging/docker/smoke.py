@@ -8,7 +8,8 @@ import pymongo
 import pymysql
 
 host = os.environ.get("CHIMERA_HOST", "db")
-mongo = pymongo.MongoClient(host, 27017, directConnection=True, serverSelectionTimeoutMS=5000)
+mongo = pymongo.MongoClient(host, 27017, directConnection=True, serverSelectionTimeoutMS=5000,
+                            username="root", password=os.environ["MONGO_INITDB_ROOT_PASSWORD"], authSource="admin")
 sql = pymysql.connect(host=host, user="root", password=os.environ["MARIADB_ROOT_PASSWORD"],
                       autocommit=True, connect_timeout=5)
 database = "chimera_release_smoke"
@@ -56,13 +57,32 @@ try:
         assert scalar("SELECT COUNT(*) FROM chimera_meta.oplog WHERE ns=%s", (database + ".items",)) >= 2
         result = scalar("SELECT mongo(%s,%s)", (database, "db.items.findOne({_id: 'persisted'})"))
         assert json.loads(result)["_id"] == "persisted"
-        # A non-loopback Mongo listener must keep the SQL gateway closed.
+        # Authenticated gateways use the mapped root account's SQL privileges.
+        assert mongo[database].command({"chimeraSql": "SELECT CURRENT_USER() AS who"})["cursor"]["firstBatch"][0]["who"] == "root@localhost"
+        anonymous = pymongo.MongoClient(host, 27017, directConnection=True, serverSelectionTimeoutMS=5000)
         try:
-            mongo[database].command({"chimeraSql": "SELECT 1"})
-            raise AssertionError("SQL gateway unexpectedly enabled on the container Mongo listener")
+            anonymous[database].items.find_one()
+            raise AssertionError("anonymous Mongo read unexpectedly succeeded")
         except pymongo.errors.OperationFailure as error:
             assert error.code == 13, error
-        print("PASS: wire CRUD, SQL visibility, SQL→change stream, oplog, mongo() and gateway isolation")
+        finally:
+            anonymous.close()
+        with pymongo.MongoClient(host, 27017, directConnection=True, serverSelectionTimeoutMS=5000,
+                                 username="smoke_reader", password="smoke-mongo-reader", authSource="admin") as reader:
+            assert reader[database].items.find_one({"_id": "persisted"})["value"] == 42
+            assert reader[database].command({"chimeraSql": "SELECT CURRENT_USER() AS who"})["cursor"]["firstBatch"][0]["who"] == "smoke_reader@localhost"
+            for forbidden in (
+                lambda: reader[database].items.insert_one({"_id": "forbidden"}),
+                lambda: reader.chimera_auth.credentials.find_one(),
+                lambda: reader[database].command({"chimeraSql": "SELECT * FROM mysql.global_priv"}),
+            ):
+                try:
+                    forbidden()
+                except pymongo.errors.OperationFailure as error:
+                    assert error.code == 13, error
+                else:
+                    raise AssertionError("least-privilege reader escaped its SQL grants")
+        print("PASS: wire CRUD, SQL visibility, change stream, oplog, gateways, SCRAM and native privilege isolation")
 finally:
     sql.close()
     mongo.close()

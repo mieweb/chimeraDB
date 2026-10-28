@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <optional>
+#include <set>
 
 #include "chimera/changestream.h"
 #include "chimera/codec.h"
@@ -352,7 +354,7 @@ Bson find_oplog(Ctx& ctx, const Namespace& ns) {
   tail.after_seq =
       (!newest_first && batch.documents.size() >= wanted) ? batch.last_seq : head;
   tail.await_data = flag(ctx.body, "awaitData");
-  const int64_t cursor_id = CursorRegistry::instance().open_tail(ns.text(), std::move(tail));
+  const int64_t cursor_id = CursorRegistry::instance().open_tail(ns.text(), std::move(tail), ctx.state.principal());
   return cursor_reply(cursor_id, ns.text(), "firstBatch", batch.documents);
 }
 
@@ -392,7 +394,7 @@ Bson tail_batch(Ctx& ctx, int64_t cursor_id, const Namespace& ns, const TailStat
     wait_for_oplog_write(static_cast<uint64_t>(std::min<int64_t>(left, kOplogPollMs)));
   }
 
-  CursorRegistry::instance().advance_tail(cursor_id, next_after);
+  CursorRegistry::instance().advance_tail(cursor_id, next_after, ctx.state.principal());
   if (!tail.change_stream) {
     return cursor_reply(cursor_id, ns.text(), "nextBatch", batch.documents);
   }
@@ -431,7 +433,7 @@ Bson cmd_find(Ctx& ctx) {
   documents.erase(documents.begin(), documents.begin() + take);
 
   const int64_t cursor_id =
-      single_batch ? 0 : CursorRegistry::instance().open(ns.text(), std::move(documents));
+      single_batch ? 0 : CursorRegistry::instance().open(ns.text(), std::move(documents), ctx.state.principal());
   return cursor_reply(cursor_id, ns.text(), "firstBatch", first);
 }
 
@@ -446,14 +448,14 @@ Bson cmd_get_more(Ctx& ctx) {
       static_cast<int32_t>(number(ctx.body, "batchSize", kDefaultBatchSize));
 
   TailState tail;
-  if (CursorRegistry::instance().tail_state(cursor_id, ns.text(), &tail)) {
+  if (CursorRegistry::instance().tail_state(cursor_id, ns.text(), &tail, ctx.state.principal())) {
     return tail_batch(ctx, cursor_id, ns, tail, batch_size,
                       number(ctx.body, "maxTimeMS", kDefaultAwaitMs));
   }
 
   bool exhausted = false;
   std::vector<Bson> batch = CursorRegistry::instance().next_batch(
-      cursor_id, ns.text(), batch_size, &exhausted);
+      cursor_id, ns.text(), batch_size, &exhausted, ctx.state.principal());
   return cursor_reply(exhausted ? 0 : cursor_id, ns.text(), "nextBatch", batch);
 }
 
@@ -465,7 +467,7 @@ Bson cmd_kill_cursors(Ctx& ctx) {
     for (const auto& value : array_values(cursors->get())) {
       if (!value_is_numeric(value.get())) continue;
       const int64_t id = static_cast<int64_t>(value_as_double(value.get()));
-      (CursorRegistry::instance().kill(id) ? killed : not_found).push_back(id);
+      (CursorRegistry::instance().kill(id, ctx.state.principal(), ctx.db + "." + ctx.argument) ? killed : not_found).push_back(id);
     }
   }
 
@@ -511,7 +513,7 @@ std::vector<Bson> take_sql_source(Ctx& ctx, std::vector<Bson>& stages) {
   if (body.type() != BSON_TYPE_UTF8) throw type_mismatch("$sql takes a statement string");
   const std::string statement(body.get().value.v_utf8.str, body.get().value.v_utf8.len);
   stages.erase(stages.begin());
-  return run_sql_gateway(ctx.sql(), statement).documents;
+  return run_sql_gateway(ctx.state.gateway_sql(), statement).documents;
 }
 
 // `$changeStream` is a source stage like `$sql`: it produces events rather than
@@ -553,7 +555,7 @@ Bson open_change_stream(Ctx& ctx, const std::vector<Bson>& stages) {
   tail.after_seq = after_seq;
   tail.await_data = true;
   tail.change_stream = true;
-  const int64_t cursor_id = CursorRegistry::instance().open_tail(ns.text(), std::move(tail));
+  const int64_t cursor_id = CursorRegistry::instance().open_tail(ns.text(), std::move(tail), ctx.state.principal());
 
   Bson reply = cursor_reply(cursor_id, ns.text(), "firstBatch", {}, after_seq);
   append_operation_time(reply, ctx.sql());
@@ -603,7 +605,7 @@ Bson cmd_aggregate(Ctx& ctx) {
   documents.erase(documents.begin(), documents.begin() + take);
 
   const int64_t cursor_id =
-      documents.empty() ? 0 : CursorRegistry::instance().open(ns_text, std::move(documents));
+      documents.empty() ? 0 : CursorRegistry::instance().open(ns_text, std::move(documents), ctx.state.principal());
   return cursor_reply(cursor_id, ns_text, "firstBatch", first);
 }
 
@@ -611,7 +613,7 @@ Bson cmd_aggregate(Ctx& ctx) {
 // cursor like any other read, so a driver needs no special handling; a statement
 // that returned no result set reports how many rows it changed instead.
 Bson cmd_chimera_sql(Ctx& ctx) {
-  SqlGatewayResult result = run_sql_gateway(ctx.sql(), ctx.argument);
+  SqlGatewayResult result = run_sql_gateway(ctx.state.gateway_sql(), ctx.argument);
   if (!result.had_result_set) {
     Bson reply;
     BSON_APPEND_INT64(reply.get(), "n", static_cast<int64_t>(result.affected_rows));
@@ -1015,6 +1017,12 @@ Bson cmd_list_databases(Ctx& ctx) {
   BSON_APPEND_ARRAY_BEGIN(reply.get(), "databases", &array);
   uint32_t slot = 0;
   for (const auto& name : list_databases(ctx.sql())) {
+    if (!ctx.state.allowed(name, "", SqlSession::Select)) {
+      bool visible = false;
+      for (const auto& table : list_collections(ctx.state.gateway_sql(), name))
+        visible = visible || ctx.state.allowed(name, table, SqlSession::Select);
+      if (!visible) continue;
+    }
     Bson entry;
     BSON_APPEND_UTF8(entry.get(), "name", name.c_str());
     BSON_APPEND_INT64(entry.get(), "sizeOnDisk", 0);
@@ -1032,6 +1040,7 @@ Bson cmd_list_collections(Ctx& ctx) {
   const bool name_only = flag(ctx.body, "nameOnly");
   std::vector<Bson> batch;
   for (const auto& name : list_collections(ctx.sql(), ctx.db)) {
+    if (!ctx.state.allowed(ctx.db, name, SqlSession::Select)) continue;
     Bson entry;
     BSON_APPEND_UTF8(entry.get(), "name", name.c_str());
     BSON_APPEND_UTF8(entry.get(), "type", "collection");
@@ -1149,6 +1158,63 @@ SqlSession& ConnectionState::sql() {
   return *sql_;
 }
 
+SqlSession& ConnectionState::gateway_sql() {
+  if (!secured()) return sql();
+  if (!gateway_sql_) gateway_sql_ = std::make_unique<SqlSession>(true);
+  const auto& c = authentication_.credential();
+  gateway_sql_->set_identity(trusted_user_.empty() ? c.user : trusted_user_,
+                             trusted_user_.empty() ? c.sql_host : trusted_host_,
+                             trusted_user_.empty() ? c.sql_role : trusted_role_);
+  return *gateway_sql_;
+}
+void ConnectionState::trust_sql_caller(const std::string& user, const std::string& host, const std::string& role) {
+  if (user.empty() || host.empty()) throw unauthorized("SQL caller has no named identity");
+  trusted_user_ = user; trusted_host_ = host; trusted_role_ = role;
+}
+void ConnectionState::reset_authentication() {
+  // Close the restricted THD before changing users: its temporary tables,
+  // session variables and open transactions must never cross identities.
+  gateway_sql_.reset();
+  authentication_.reset();
+}
+void ConnectionState::require_authenticated() {
+  if (!trusted_user_.empty()) return;
+  if (secured()) authentication_.validate(sql());
+}
+std::string ConnectionState::principal() const {
+  if (!trusted_user_.empty()) return "sql:" + hex_encode(trusted_user_) + ":" + hex_encode(trusted_host_);
+  if (!secured()) return "";
+  return authentication_.principal();
+}
+bool ConnectionState::allowed(const std::string& db, const std::string& table, unsigned access) {
+  if (!secured()) return true;
+  std::string lower = db;
+  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+  if (lower == "mysql" || lower == "sys" || lower == "information_schema" ||
+      lower == "performance_schema" || lower == "chimera_meta" || lower == "chimera_auth") return false;
+  if (db == "local" && table == "oplog.rs")
+    return access == SqlSession::Select &&
+           gateway_sql().allowed("chimera_meta", "oplog", SqlSession::Select);
+  return gateway_sql().allowed(db, table, access);
+}
+void ConnectionState::authorize(const std::string& db, const std::string& table, unsigned access) {
+  if (!allowed(db, table, access)) throw unauthorized("Not authorized on " + db);
+  if (!secured()) return;
+  const std::string schema = sql().quote(db), name = sql().quote(table);
+  if ((access & SqlSession::Create) &&
+      sql().query("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=" + schema).rows.empty() &&
+      !gateway_sql().allowed(db, "", SqlSession::Create))
+    throw unauthorized("Not authorized to create database " + db);
+  // The collection engine manages base tables. A SQL SECURITY INVOKER view
+  // must be evaluated by the restricted SQL gateway, never the engine identity.
+  if (!table.empty()) {
+    auto type = sql().query("SELECT TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA=" +
+                            schema + " AND TABLE_NAME=" + name);
+    if (!type.rows.empty() && type.rows[0][0] && *type.rows[0][0] != "BASE TABLE")
+      throw unauthorized("Use the SQL gateway to access views");
+  }
+}
+
 Bson dispatch_command(const wire::Request& req, ConnectionState& state) noexcept {
   try {
     auto fields = document_fields(req.body.get());
@@ -1163,7 +1229,42 @@ Bson dispatch_command(const wire::Request& req, ConnectionState& state) noexcept
             : std::string();
 
     if (command == "hello" || command == "isMaster" || command == "ismaster") {
-      return hello_reply(state.identity(), state.connection_id());
+      Bson reply = hello_reply(state.identity(), state.connection_id());
+      if (state.identity().authentication && bson_has_field(req.body.get(), "saslSupportedMechs")) {
+        bson_t mechs;
+        BSON_APPEND_ARRAY_BEGIN(reply.get(), "saslSupportedMechs", &mechs);
+        BSON_APPEND_UTF8(&mechs, "0", "SCRAM-SHA-256");
+        bson_append_array_end(reply.get(), &mechs);
+      }
+      // No speculativeAuthenticate reply: the public handshake spec requires
+      // drivers to fall back to the ordinary SASL exchange in this case.
+      return reply;
+    }
+    if (command == "saslStart") {
+      state.reset_authentication();
+      return state.authentication().start(req.body.get(), req.database, state.sql());
+    }
+    if (command == "saslContinue") return state.authentication().more(req.body.get(), req.database, state.sql());
+    if (command == "logout") { state.reset_authentication(); return ok_reply(); }
+    // Monitoring connections are deliberately anonymous. An anonymous ping
+    // must never initialize the catalog or touch the oplog clock.
+    if (command == "ping" && state.secured() && !state.authentication().authenticated()) return ok_reply();
+    state.require_authenticated();
+    if (command == "connectionStatus") {
+      Bson reply = ok_reply();
+      bson_t info, users, user;
+      BSON_APPEND_DOCUMENT_BEGIN(reply.get(), "authInfo", &info);
+      BSON_APPEND_ARRAY_BEGIN(&info, "authenticatedUsers", &users);
+      if (state.authentication().authenticated()) {
+        BSON_APPEND_DOCUMENT_BEGIN(&users, "0", &user);
+        BSON_APPEND_UTF8(&user, "user", state.authentication().credential().user.c_str());
+        BSON_APPEND_UTF8(&user, "db", state.authentication().credential().auth_db.c_str());
+        bson_append_document_end(&users, &user);
+      }
+      bson_append_array_end(&info, &users);
+      append_empty_array(&info, "authenticatedUserRoles");
+      bson_append_document_end(reply.get(), &info);
+      return reply;
     }
     if (command == "ping") {
       // Meteor pins a change stream's start time from a ping and later uses one
@@ -1181,7 +1282,71 @@ Bson dispatch_command(const wire::Request& req, ConnectionState& state) noexcept
     // multi-statement transaction to resume.
     if (command == "endSessions" || command == "refreshSessions") return ok_reply();
 
+    static const std::set<std::string> authorized_commands = {
+      "find", "getMore", "killCursors", "count", "aggregate", "distinct", "chimeraSql",
+      "insert", "update", "delete", "findAndModify", "findandmodify", "create", "drop",
+      "dropDatabase", "listDatabases", "listCollections", "listIndexes", "createIndexes", "dropIndexes"
+    };
+    if (!authorized_commands.count(command))
+      return error_reply(59, "CommandNotFound", "no such command: '" + command + "'");
     Ctx ctx{req.body.get(), req.database, argument, state};
+    // The engine session owns internal metadata and triggers. Check the
+    // authenticated account's native grants before it may reach any handler.
+    // Unknown commands still receive CommandNotFound after the auth gate.
+    if (command == "find" || command == "count" || command == "distinct" || command == "listIndexes")
+      state.authorize(req.database, argument, SqlSession::Select);
+    if (command == "getMore") {
+      const std::string coll = text_field(req.body.get(), "collection");
+      if (coll.rfind("$cmd.", 0) != 0) state.authorize(req.database, coll, SqlSession::Select);
+    }
+    if (command == "aggregate") {
+      bson_t pipeline;
+      bool sql_source = false;
+      if (view_field(req.body.get(), "pipeline", &pipeline)) {
+        bson_iter_t it;
+        if (bson_iter_init_find(&it, &pipeline, "0") && BSON_ITER_HOLDS_DOCUMENT(&it)) {
+          const uint8_t* data; uint32_t len; bson_iter_document(&it, &len, &data);
+          bson_t first; bson_init_static(&first, data, len);
+          sql_source = bson_has_field(&first, "$sql");
+        }
+      }
+      if (!sql_source) state.authorize(req.database, argument, SqlSession::Select);
+    }
+    if (command == "insert" || command == "update" || command == "delete" ||
+        command == "findAndModify" || command == "findandmodify") {
+      unsigned access = command == "insert" ? SqlSession::Insert : SqlSession::Select;
+      if (command == "update") access |= SqlSession::Update;
+      if (command == "delete") access |= SqlSession::Delete;
+      if (command == "findAndModify" || command == "findandmodify")
+        access |= flag(req.body.get(), "remove") ? SqlSession::Delete : SqlSession::Update;
+      if (command == "update") {
+        bson_t updates;
+        if (view_field(req.body.get(), "updates", &updates)) {
+          for (const auto& entry : document_fields(&updates)) {
+            bson_t update;
+            if (as_view(entry.second.get(), &update) && flag(&update, "upsert")) access |= SqlSession::Insert;
+          }
+        }
+      }
+      if (flag(req.body.get(), "upsert")) access |= SqlSession::Insert;
+      state.authorize(req.database, argument, access);
+      if (command != "delete" && !(command == "findAndModify" && flag(req.body.get(), "remove")) &&
+          !(command == "findandmodify" && flag(req.body.get(), "remove")) &&
+          !Collection(state.sql(), ctx.ns()).exists())
+        state.authorize(req.database, argument, SqlSession::Create);
+    }
+    if (command == "create") state.authorize(req.database, argument, SqlSession::Create);
+    if (command == "drop") state.authorize(req.database, argument, SqlSession::Drop);
+    if (command == "dropDatabase") state.authorize(req.database, "", SqlSession::Drop);
+    if (command == "createIndexes" || command == "dropIndexes")
+      state.authorize(req.database, argument, SqlSession::Alter | SqlSession::Index);
+    if (command == "createIndexes" && !Collection(state.sql(), ctx.ns()).exists())
+      state.authorize(req.database, argument, SqlSession::Create);
+    // listCollections is filtered table by table; never expose internal schemas.
+    if (command == "listCollections" && !state.allowed(req.database, "", SqlSession::Select)) {
+      if (list_collections(state.gateway_sql(), req.database).empty())
+        throw unauthorized("Not authorized on " + req.database);
+    }
 
     if (command == "find") return cmd_find(ctx);
     if (command == "getMore") return cmd_get_more(ctx);

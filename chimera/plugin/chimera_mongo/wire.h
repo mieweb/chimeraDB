@@ -33,7 +33,7 @@ struct Request {
 
 // Reads exactly one framed message. Returns false on a clean peer close;
 // throws on a malformed or oversized frame.
-bool read_message(int fd, std::vector<uint8_t>& raw);
+bool read_message(int fd, std::vector<uint8_t>& raw, void* tls = nullptr);
 
 // Split out from parse_request so that a reply to an *unparseable* body can
 // still carry the right responseTo and reach the client.
@@ -43,7 +43,7 @@ Request parse_request(const std::vector<uint8_t>& raw);
 
 std::vector<uint8_t> encode_reply(const Request& req, int32_t request_id, const bson_t* body);
 
-bool write_all(int fd, const std::vector<uint8_t>& bytes);
+bool write_all(int fd, const std::vector<uint8_t>& bytes, void* tls = nullptr);
 
 }  // namespace wire
 }  // namespace chimera

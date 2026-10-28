@@ -47,26 +47,27 @@ public:
 
   // Returns 0 when nothing is left over, which is how a driver knows the cursor
   // is already exhausted.
-  int64_t open(std::string ns, std::vector<Bson> remaining);
+  int64_t open(std::string ns, std::vector<Bson> remaining, const std::string& owner = "");
 
   // A tailing cursor never reports itself exhausted, so the id is always real.
-  int64_t open_tail(std::string ns, TailState state);
+  int64_t open_tail(std::string ns, TailState state, const std::string& owner = "");
 
   // Fills `state` and returns true when the cursor tails; the caller does the
   // reading, because only it holds a SQL session.
-  bool tail_state(int64_t id, const std::string& ns, TailState* state);
-  void advance_tail(int64_t id, uint64_t after_seq);
+  bool tail_state(int64_t id, const std::string& ns, TailState* state, const std::string& owner = "");
+  void advance_tail(int64_t id, uint64_t after_seq, const std::string& owner = "");
 
   // Throws CursorNotFound if the id is unknown or belongs to another namespace.
   std::vector<Bson> next_batch(int64_t id, const std::string& ns, int32_t batch_size,
-                               bool* exhausted);
+                               bool* exhausted, const std::string& owner = "");
 
-  bool kill(int64_t id);
+  bool kill(int64_t id, const std::string& owner = "", const std::string& ns = "");
   void kill_all();
 
 private:
   struct Entry {
     std::string ns;
+    std::string owner;
     std::vector<Bson> remaining;
     size_t offset = 0;
     int64_t last_used_seconds = 0;

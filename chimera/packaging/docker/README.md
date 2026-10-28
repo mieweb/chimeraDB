@@ -32,7 +32,8 @@ Use `--server 11.8` and a matching image tag for that series. Build both series
 before calling a release verified. `--packages DIR` reuses previously built
 packages from `chimera/packaging/dist/debian/<series>/<arch>/`.
 
-Connect with `mongosh mongodb://127.0.0.1:27017/appdb` and
+Set `MONGO_INITDB_ROOT_PASSWORD` for a fresh Compose volume, then connect with
+`mongosh 'mongodb://root@127.0.0.1:27017/appdb?authSource=admin' --password` and
 `mariadb --skip-ssl -h127.0.0.1 -P3306 -uroot -p`. This loopback example does not
 configure SQL TLS; use the SSH tunnel below for remote access. For local administrative SQL inside the
 container, use `docker compose -f chimera/packaging/docker/compose.yaml exec db mariadb`.
@@ -88,10 +89,20 @@ ssh -N -L 3306:127.0.0.1:3306 -L 27017:127.0.0.1:27017 user@debian-vm
 Inside the container, the listeners bind `0.0.0.0` so Docker forwarding works.
 Compose explicitly publishes to **host** `127.0.0.1`; Docker otherwise publishes
 on all interfaces ([Docker documentation](https://docs.docker.com/get-started/docker-concepts/running-containers/publishing-ports/)).
-The Mongo listener has no authentication. Containers sharing its bridge network
-can also reach it, so do not attach untrusted containers to that network or use
-host networking. The Mongo-to-SQL gateway is disabled for this non-loopback bind;
-SQL clients can still use `mongo()`.
+The Mongo listener requires SCRAM-SHA-256. Fresh volumes provision Mongo `root`
+against the existing SQL `root@localhost` account. `MONGO_INITDB_ROOT_PASSWORD`
+(or `_FILE`) supplies its password; a direct `docker run` falls back to
+`MARIADB_ROOT_PASSWORD` if omitted. Compose requires a separate Mongo password.
+These initialization variables apply only to new volumes. Existing volumes must
+provision credentials with `docker exec -it CONTAINER chimeradb-mongo-user --user root --
+--protocol=socket --socket=/run/mysqld/mysqld.sock --user=root` before Mongo data access.
+Use application accounts with limited grants for ordinary clients.
+
+The container's explicit insecure-bind opt-in permits plaintext SCRAM over its bridge
+network. For encrypted traffic, mount a server certificate/key and configure the TLS
+options described in [authentication and TLS](../../README.md#mongo-authentication-and-tls).
+Containers sharing the bridge can reach the port; host publishing remains loopback-only.
+Authenticated Mongo-to-SQL gateway statements run under the mapped SQL account.
 
 Native Debian and Homebrew installations keep the Mongo listener itself on
 loopback. The container override is shipped only in the Docker image.

@@ -44,3 +44,15 @@ target_include_directories(oplog_pruning_tests PRIVATE ../../plugin/chimera_mong
 target_link_libraries(oplog_pruning_tests PRIVATE chimera_translator doctest::doctest Threads::Threads)
 target_compile_options(oplog_pruning_tests PRIVATE -Wall -Wextra)
 doctest_discover_tests(oplog_pruning_tests)
+
+# Authentication crypto/state and cursor isolation, independently of MariaDB.
+find_package(OpenSSL REQUIRED)
+add_executable(scram_tests
+  main.cpp test_scram.cpp
+  ../../plugin/chimera_mongo/scram.cc
+  ../../plugin/chimera_mongo/cursor.cc
+)
+target_include_directories(scram_tests PRIVATE ../../plugin/chimera_mongo)
+target_link_libraries(scram_tests PRIVATE chimera_translator doctest::doctest OpenSSL::Crypto Threads::Threads)
+target_compile_options(scram_tests PRIVATE -Wall -Wextra)
+doctest_discover_tests(scram_tests)

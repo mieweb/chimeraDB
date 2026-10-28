@@ -60,8 +60,9 @@ sudo chimeradb setup
 sudo chimeradb status
 ```
 
-The Mongo listener has **no authentication** and defaults to
-`127.0.0.1:27017`. SQL uses the installed MariaDB service's existing settings.
+The Mongo listener requires **SCRAM-SHA-256 authentication** and defaults to
+`127.0.0.1:27017`. Provision credentials with `chimeradb-mongo-user`; see
+[authentication and TLS](../../README.md#mongo-authentication-and-tls). SQL uses the installed MariaDB service's existing settings.
 For 11.8 on Debian 12, first configure MariaDB's signed 11.8 repository using
 the [official repository instructions](https://mariadb.org/download/?t=repo-config).
 Debian 13 needs only its normal Debian repositories for 11.8. The build report

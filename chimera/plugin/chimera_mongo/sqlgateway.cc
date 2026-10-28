@@ -18,8 +18,7 @@ namespace {
 // which is the safe reading — no flag, no writes.
 const char* g_write_flag = nullptr;
 
-// True when the listener is bound beyond loopback; the gateway then refuses
-// every statement until authentication exists (#5).
+// True only for an explicitly unauthenticated non-loopback listener.
 bool g_network_exposed = false;
 
 bool writes_allowed() { return g_write_flag != nullptr && *g_write_flag != 0; }
@@ -57,7 +56,7 @@ SqlGatewayResult run_sql_gateway(SqlSession& sql, const std::string& statement) 
   if (g_network_exposed) {
     throw unauthorized(
         "chimeraSql and $sql are disabled: the listener accepts non-loopback "
-        "connections and has no authentication yet "
+        "connections with authentication disabled "
         "(https://github.com/mieweb/chimeraDB/issues/5)");
   }
   if (statement.empty()) throw failed_to_parse("chimeraSql needs a statement");

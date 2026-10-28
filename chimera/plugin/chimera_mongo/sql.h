@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <utility>
 
 #include "chimera/filter.h"
 
@@ -38,6 +39,7 @@ struct ResultSet {
 class SqlSession {
 public:
   SqlSession();
+  explicit SqlSession(bool independent);
   ~SqlSession();
   SqlSession(const SqlSession&) = delete;
   SqlSession& operator=(const SqlSession&) = delete;
@@ -57,12 +59,22 @@ public:
   std::string quote(std::string_view text) const;
   std::string quote_binary(const uint8_t* data, size_t length) const;
 
+  // A separate local THD, bound to a verified MariaDB identity. Engine metadata
+  // stays on the internal session; arbitrary gateway SQL uses this restricted one.
+  void set_identity(const std::string& user, const std::string& host, const std::string& role = "");
+  enum Access : unsigned { Select=1, Insert=2, Update=4, Delete=8, Create=16,
+                           Drop=32, Index=64, Alter=128 };
+  bool allowed(const std::string& db, const std::string& table, unsigned access);
+  static std::pair<std::string, std::string> caller_identity();
+  static std::string caller_role();
+
   void begin();
   void commit();
   void rollback();
 
 private:
   void* handle_ = nullptr;  // MYSQL*
+  void* identity_ = nullptr;  // private native security context
 };
 
 // mysys keeps per-thread state that the server dereferences on the first query,

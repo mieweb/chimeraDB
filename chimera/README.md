@@ -86,14 +86,113 @@ the flag the library is refused — and because the refusal happens before its s
 variables register, `--chimera-mongo-port` then reads as an unknown variable and the server
 aborts startup entirely. A confusing cascade from one missing flag.
 
-`chimera_mongo_bind` defaults to `127.0.0.1`, and every listener variable is
-`PLUGIN_VAR_READONLY` — a listener cannot be moved out from under live connections. There is
-no authentication on the Mongo port yet
-([#5](https://github.com/mieweb/chimeraDB/issues/5)), so loopback is **enforced**, not merely
-defaulted: a non-loopback `chimera_mongo_bind` refuses to start unless
-`chimera_mongo_insecure_bind=ON` is also set, the opt-in is logged loudly at startup, and
-`chimeraSql`/`$sql` are refused entirely on such a bind — an unauthenticated socket that can
-reach the SQL gateway can read the whole server, not just collection tables.
+`chimera_mongo_auth=ON` is the default. Anonymous connections may only handshake,
+ping, authenticate, or log out; a fresh installation with no credentials fails
+closed for every data command. Listener settings are startup-only.
+
+### Mongo authentication and TLS
+
+Mongo usernames map to **the same named MariaDB account**, with an explicitly selected
+account host (default `localhost`). SCRAM needs a separate verifier; an existing SQL
+password hash cannot supply it. The passwords can differ, and changing one does not
+change the other. Mongo `createUser`/role-management commands are not implemented;
+SQL administrators provision, rotate, and revoke credentials with the helper below.
+
+First create an ordinary SQL account and grant its application access:
+
+```sql
+CREATE USER 'alice'@'localhost' IDENTIFIED BY 'a-separate-sql-password';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER
+  ON appdb.* TO 'alice'@'localhost';
+```
+
+Install the Mongo password through a SQL administrator connection. The helper prompts
+twice, applies RFC 4013 SASLprep, and stores only a random salt, iteration count,
+StoredKey and ServerKey in private `chimera_auth.credentials`. No password is passed
+in argv or sent to MariaDB. The default PBKDF2 iteration count is 15,000; the helper
+accepts `--iterations` from 4,096 to 1,000,000.
+
+```sh
+# Debian / Homebrew installed helper:
+chimeradb-mongo-user --user alice -- --protocol=socket --user=root
+# Source checkout; substitute this instance's SQL socket and mariadb client:
+python3 chimera/scripts/mongo-auth.py --user alice --client /path/to/mariadb -- \
+  --no-defaults --socket=/path/to/mysql.sock --user=root
+mongosh 'mongodb://alice@127.0.0.1:27017/appdb?authSource=admin' --password
+```
+
+Use `--auth-db NAME` to choose an authentication database other than `admin`, and
+`--sql-host HOST` to select the exact MariaDB account host. This host selects the
+mapped SQL account; it is not a client IP filter. The username remains unchanged.
+Password rotation repeats the helper command. `--remove --user alice` revokes that
+credential. Rotation, deletion, SQL account locking/dropping, and GRANT revocation
+remove access from existing connections on their next data command. Reconnect after
+rotation; revocation does not interrupt a command already executing. Already materialized
+SQL results retain the opening statement's authorization until their cursor closes. Revoke the
+credential before recycling a dropped SQL account name.
+
+Authorization uses MariaDB's global, database and table grants, including the account's
+default SQL role. The SQL `mongo()` gateway preserves the caller's active role.
+Collection reads require `SELECT`; writes require the corresponding `INSERT`,
+`UPDATE` or `DELETE` grants (read-modify-write operations also need `SELECT`), creation
+requires `CREATE`, drops require `DROP`, and index changes require `ALTER` and `INDEX`.
+Implicit collection creation requires `CREATE` too. Column-only grants are not enough
+for a whole-document collection operation. A raw oplog reader needs explicit `SELECT`
+on `chimera_meta.oplog`, since that stream contains events from every database.
+Database and collection listings filter inaccessible objects. Views and internal
+schemas are accessed through the restricted SQL gateway, not collection commands.
+
+The engine's internal catalog/trigger session stays private. `chimeraSql` and `$sql`
+execute in a separate THD with the authenticated user's native SQL privileges; users
+need no grants on engine metadata or the credential store. Cursors are bound to their
+user, authentication database and credential revision, including materialized SQL
+results. Authentication uses `saslStart`/`saslContinue` and advertises only
+`SCRAM-SHA-256`. Speculative authentication safely falls back to ordinary SASL;
+SCRAM-SHA-1, X.509 login and Mongo role administration are not advertised.
+
+For encrypted connections, set both of these startup options:
+
+```ini
+[mariadb]
+chimera-mongo-tls-cert=/etc/chimeradb/server-chain.pem
+chimera-mongo-tls-key=/etc/chimeradb/server-key.pem
+```
+
+The key must be readable by the MariaDB service account. With those options, every
+Mongo connection requires TLS 1.2 or newer; there is no mixed plaintext/TLS mode.
+Clients verify the server certificate normally:
+
+```sh
+mongosh 'mongodb://alice@db.example:27017/appdb?authSource=admin&tls=true&directConnection=true' \
+  --password --tlsCAFile /path/to/ca.pem
+CHIMERA_MONGO_TLS_CA=/path/to/ca.pem chimeradb status --protocol=socket --user=root
+```
+
+For public CAs the health probe accepts `CHIMERA_MONGO_TLS=ON`; optional
+`CHIMERA_MONGO_TLS_SERVER_NAME` specifies the certificate name when probing through
+a tunnel. Certificate and hostname verification are always enabled.
+
+`chimera_mongo_bind` still defaults to `127.0.0.1`. A non-loopback bind requires
+**both authentication and TLS**, unless `chimera_mongo_insecure_bind=ON` explicitly
+acknowledges the missing protection and logs a warning. An unauthenticated non-loopback
+listener still refuses `chimeraSql`/`$sql`. `chimera_mongo_auth=OFF` is an explicit,
+logged development compatibility mode that gives anyone reaching the port full
+collection access. The legacy differential/feature suite uses that mode on loopback;
+normal source startup and packages require authentication.
+
+Acceptance on either supported server series:
+
+```sh
+python3 -m venv chimera/.run/auth-venv
+chimera/.run/auth-venv/bin/pip install -r chimera/tests/auth/requirements.txt
+CHIMERA_AUTH_PYTHON="$PWD/chimera/.run/auth-venv/bin/python" \
+  chimera/scripts/test-mongo-auth.sh --server 11.8
+# Repeat with --server 10.11. Requires mongosh and openssl on PATH.
+```
+
+The acceptance script uses development fixtures and restarts the selected development
+instance. Its raw-wire tests exercise malformed/out-of-order authentication; PyMongo
+and mongosh exercise default negotiation, authorization, revocation and verified TLS.
 
 Two build facts follow from living inside the server tree. MariaDB 10.11 compiles its whole
 tree as C++11, so the plugin target sets `CXX_STANDARD 17` on itself to link the translator.
@@ -196,8 +295,8 @@ Numbers come back as numbers and `NULL` comes back as `null`. `DECIMAL` is the d
 exception: it arrives as a string, because turning it into a double would throw away the
 precision it was chosen for.
 
-**Writes are refused by default.** The Mongo port has no authentication yet, so a mongo
-client is only allowed to read:
+**SQL gateway writes are refused by default**, in addition to the authenticated
+account's native SQL grants:
 
 ```js
 db.runCommand({chimeraSql: "DELETE FROM shop.parts"})

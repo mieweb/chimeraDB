@@ -4,6 +4,8 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <openssl/ssl.h>
+#include <algorithm>
 
 #include "chimera/error.h"
 
@@ -30,13 +32,14 @@ void append_int64(std::vector<uint8_t>& out, int64_t v) {
   append_int32(out, static_cast<int32_t>(v >> 32));
 }
 
-bool read_exact(int fd, uint8_t* buf, size_t want) {
+bool read_exact(int fd, uint8_t* buf, size_t want, void* tls) {
   size_t got = 0;
   while (got < want) {
-    ssize_t n = ::recv(fd, buf + got, want - got, 0);
+    ssize_t n = tls ? SSL_read(static_cast<SSL*>(tls), buf + got, static_cast<int>(std::min<size_t>(want - got, 1 << 20)))
+                    : ::recv(fd, buf + got, want - got, 0);
     if (n == 0) return false;  // peer closed
     if (n < 0) {
-      if (errno == EINTR) continue;
+      if (!tls && errno == EINTR) continue;
       return false;
     }
     got += static_cast<size_t>(n);
@@ -126,9 +129,9 @@ Bson fold_in_sequences(const Bson& body,
 
 }  // namespace
 
-bool read_message(int fd, std::vector<uint8_t>& raw) {
+bool read_message(int fd, std::vector<uint8_t>& raw, void* tls) {
   uint8_t header[kHeaderBytes];
-  if (!read_exact(fd, header, sizeof header)) return false;
+  if (!read_exact(fd, header, sizeof header, tls)) return false;
 
   int32_t length = read_int32(header);
   if (length < kHeaderBytes || length > kMaxMessageBytes) {
@@ -138,7 +141,7 @@ bool read_message(int fd, std::vector<uint8_t>& raw) {
   raw.assign(header, header + kHeaderBytes);
   raw.resize(static_cast<size_t>(length));
   if (length > kHeaderBytes &&
-      !read_exact(fd, raw.data() + kHeaderBytes, static_cast<size_t>(length) - kHeaderBytes)) {
+      !read_exact(fd, raw.data() + kHeaderBytes, static_cast<size_t>(length) - kHeaderBytes, tls)) {
     return false;
   }
   return true;
@@ -250,12 +253,14 @@ std::vector<uint8_t> encode_reply(const Request& req, int32_t request_id, const 
   return out;
 }
 
-bool write_all(int fd, const std::vector<uint8_t>& bytes) {
+bool write_all(int fd, const std::vector<uint8_t>& bytes, void* tls) {
   size_t sent = 0;
   while (sent < bytes.size()) {
-    ssize_t n = ::send(fd, bytes.data() + sent, bytes.size() - sent, 0);
-    if (n < 0) {
-      if (errno == EINTR) continue;
+    ssize_t n = tls ? SSL_write(static_cast<SSL*>(tls), bytes.data() + sent,
+                                  static_cast<int>(std::min<size_t>(bytes.size() - sent, 1 << 20)))
+                    : ::send(fd, bytes.data() + sent, bytes.size() - sent, 0);
+    if (n <= 0) {
+      if (!tls && n < 0 && errno == EINTR) continue;
       return false;
     }
     sent += static_cast<size_t>(n);
