@@ -1,0 +1,227 @@
+name: publish APT repository
+
+on:
+  pull_request:
+    paths:
+      - "chimera/packaging/apt/**"
+      - "chimera/packaging/deb/verify-packages.sh"
+      - ".github/workflows/publish-apt.yml"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag matching chimera/VERSION (for example v0.1.0)"
+        required: true
+        type: string
+      revision:
+        description: "New positive Debian packaging revision; increase for every rebuild"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Keep the previous repository snapshot and Pages deployment in the same order.
+concurrency:
+  group: apt-${{ github.event_name == 'workflow_dispatch' && 'publication' || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: install repository tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apt-utils dpkg-dev gnupg python3
+      - name: verify signing, retention, immutable versions and APT trust
+        run: python3 chimera/packaging/apt/test-repository.py
+      - name: verify repository setup and host validation
+        run: python3 chimera/packaging/apt/test-setup.py
+
+  prepare:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: regression
+    runs-on: ubuntu-24.04
+    outputs:
+      source_commit: ${{ steps.source.outputs.commit }}
+      revision: ${{ steps.source.outputs.revision }}
+      package_version: ${{ steps.source.outputs.package_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: resolve the release tag to a reviewed source commit
+        id: source
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          [[ "$REVISION" =~ ^[1-9][0-9]*$ ]]
+          commit=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
+          git merge-base --is-ancestor "$commit" origin/main
+          version=$(git show "$commit:chimera/VERSION")
+          [[ "$RELEASE_TAG" == "v$version" ]]
+          printf 'commit=%s\nrevision=%s\npackage_version=%s-%s\n' \
+            "$commit" "$REVISION" "$version" "$REVISION" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: bookworm
+            series: "10.11"
+          - suite: trixie
+            series: "11.8"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_commit }}
+      - uses: docker/setup-buildx-action@v3
+      - name: build packages from the resolved source commit
+        env:
+          SUITE: ${{ matrix.suite }}
+          SERIES: ${{ matrix.series }}
+          REVISION: ${{ needs.prepare.outputs.revision }}
+        run: |
+          ./chimera/packaging/deb/build.sh --suite "$SUITE" --series "$SERIES" \
+            --arch amd64 --revision "$REVISION" --output "$RUNNER_TEMP/packages"
+      - name: test the package lifecycle
+        env:
+          SUITE: ${{ matrix.suite }}
+          SERIES: ${{ matrix.series }}
+        run: |
+          ./chimera/packaging/deb/test.sh --suite "$SUITE" --series "$SERIES" \
+            --arch amd64 --packages "$RUNNER_TEMP/packages/$SERIES/amd64"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apt-${{ matrix.suite }}
+          path: ${{ runner.temp }}/packages/${{ matrix.series }}/amd64/
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: apt-*
+          path: ${{ runner.temp }}/packages
+      - name: install repository tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apt-utils dpkg-dev gnupg python3
+      - name: import the dedicated signing key
+        env:
+          SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+          SIGNING_PASSPHRASE: ${{ secrets.APT_SIGNING_PASSPHRASE }}
+          SIGNING_FINGERPRINT: ${{ vars.APT_SIGNING_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          [[ -n "$SIGNING_KEY" && "$SIGNING_FINGERPRINT" =~ ^[A-Fa-f0-9]{40}$ ]]
+          export GNUPGHOME="$RUNNER_TEMP/apt-gnupg"
+          install -d -m 700 "$GNUPGHOME"
+          printf '%s' "$SIGNING_KEY" | gpg --batch --import
+          # Cache a passphrase in this job's isolated agent; no secret is placed
+          # in the repository, artifact, command arguments or container mounts.
+          printf 'signing test\n' > "$RUNNER_TEMP/signing-test"
+          printf '%s' "$SIGNING_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback \
+            --passphrase-fd 0 --local-user "$SIGNING_FINGERPRINT" \
+            --detach-sign --output "$RUNNER_TEMP/signing-test.sig" "$RUNNER_TEMP/signing-test"
+          printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
+      - name: restore the previously published repository
+        run: |
+          set -euo pipefail
+          if git show-ref --verify --quiet refs/remotes/origin/apt-repository; then
+            git worktree add --detach "$RUNNER_TEMP/previous" origin/apt-repository
+            printf 'HAS_PREVIOUS_REPOSITORY=true\n' >> "$GITHUB_ENV"
+          else
+            mkdir "$RUNNER_TEMP/previous"
+            printf 'HAS_PREVIOUS_REPOSITORY=false\n' >> "$GITHUB_ENV"
+          fi
+      - name: generate signed distribution indexes
+        env:
+          SIGNING_FINGERPRINT: ${{ vars.APT_SIGNING_FINGERPRINT }}
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          previous=()
+          if [[ "$HAS_PREVIOUS_REPOSITORY" == true ]]; then
+            previous=(--previous "$RUNNER_TEMP/previous/apt")
+          fi
+          python3 chimera/packaging/apt/generate-repository.py \
+            --package-set "bookworm=$RUNNER_TEMP/packages/apt-bookworm" \
+            --package-set "trixie=$RUNNER_TEMP/packages/apt-trixie" \
+            --source-ref "$SOURCE_COMMIT" --signing-key "$SIGNING_FINGERPRINT" \
+            --output "$RUNNER_TEMP/site/apt" "${previous[@]}"
+          cp chimera/packaging/apt/setup-repository.sh "$RUNNER_TEMP/site/apt/"
+          touch "$RUNNER_TEMP/site/.nojekyll"
+      - name: install using the signed APT repository
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare.outputs.package_version }}
+        run: |
+          ./chimera/packaging/apt/test-install.sh --repository "$RUNNER_TEMP/site/apt" --suite bookworm --expected-version "$EXPECTED_VERSION"
+          ./chimera/packaging/apt/test-install.sh --repository "$RUNNER_TEMP/site/apt" --suite trixie --expected-version "$EXPECTED_VERSION"
+      - name: retain the complete repository for the next publication
+        env:
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          previous="$RUNNER_TEMP/previous"
+          if [[ ! -f "$previous/.git" ]]; then
+            git worktree add --detach "$previous-new" HEAD
+            previous="$previous-new"
+            git -C "$previous" checkout --orphan apt-repository
+            git -C "$previous" rm -rf .
+          fi
+          cp -a "$RUNNER_TEMP/site/." "$previous/"
+          git -C "$previous" config user.name github-actions[bot]
+          git -C "$previous" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$previous" add .
+          git -C "$previous" commit -m "Publish APT packages from $SOURCE_COMMIT"
+          git -C "$previous" push origin HEAD:refs/heads/apt-repository
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/site
+      - name: deploy the verified repository
+        id: deployment
+        uses: actions/deploy-pages@v4
+      - name: verify installation from the published HTTPS endpoint
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          SIGNING_FINGERPRINT: ${{ vars.APT_SIGNING_FINGERPRINT }}
+          EXPECTED_VERSION: ${{ needs.prepare.outputs.package_version }}
+        run: |
+          set -euo pipefail
+          repository_url="${PAGE_URL%/}/apt"
+          curl --fail --location --retry 10 --retry-delay 6 --retry-all-errors \
+            --output /dev/null "$repository_url/dists/trixie/InRelease"
+          for suite in bookworm trixie; do
+            ./chimera/packaging/apt/test-install.sh --repository-url "$repository_url" \
+              --key-fingerprint "$SIGNING_FINGERPRINT" --suite "$suite" --expected-version "$EXPECTED_VERSION"
+          done
+          printf 'APT repository: %s\n\nSigning fingerprint: `%s`\n' \
+            "$repository_url" "$SIGNING_FINGERPRINT" >> "$GITHUB_STEP_SUMMARY"
+      - name: remove the signing key from the runner
+        if: always()
+        run: |
+          gpgconf --kill gpg-agent || true
+          rm -rf -- "$RUNNER_TEMP/apt-gnupg"

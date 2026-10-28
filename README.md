@@ -22,6 +22,11 @@ Release packaging is in progress. There is no published Homebrew tap, APT
 repository or release Docker image yet; bare `brew install chimeradb` and
 `apt install chimeradb` are not available installation routes.
 
+For Debian, the next distribution step is a signed public APT repository for
+Debian 12/13 on Intel. The [APT publishing guide](chimera/packaging/apt/README.md)
+describes its one-time signing-key/hosting setup and installation checks. It is
+not an available repository until the first deployment has passed those checks.
+
 The delivery order is Docker on an Apple Silicon Mac, Homebrew on Mac, Docker
 in the supplied Debian 13 Intel Proxmox LXC, then a native Debian Intel package.
 Recipes and their current verification limits are documented here:

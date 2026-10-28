@@ -1,5 +1,9 @@
 # Debian packages
 
+For the signed public-repository workflow and its publication prerequisites, see
+the [APT publishing guide](../apt/README.md). That repository is not live yet;
+the local package build and installation instructions below remain available.
+
 Build from the repository checkout with Docker Desktop or another Docker engine:
 
 ```sh
