@@ -22,11 +22,13 @@ struct Call {
 
 std::deque<bool> existence;
 std::vector<Call> calls;
+bool target_schema_exists = true;
 
 struct Database {
   Database() {
     existence.clear();
     calls.clear();
+    target_schema_exists = true;
   }
 
   void exists(bool present) { existence.push_back(present); }
@@ -41,6 +43,11 @@ struct Database {
 
 bool starts_with(const std::string& text, const std::string& prefix) {
   return text.compare(0, prefix.size(), prefix) == 0;
+}
+
+bool creates_target_schema(const Call& call) {
+  return call.kind == "exec" &&
+         starts_with(call.detail, "CREATE DATABASE IF NOT EXISTS `test`");
 }
 }  // namespace
 
@@ -62,6 +69,13 @@ ResultSet SqlSession::query(const std::string& statement) {
 
 void SqlSession::exec(const std::string& statement) {
   calls.push_back({"exec", statement, this});
+  // Model the security boundary: CREATE TABLE cannot recreate a schema that
+  // disappeared. A privileged CREATE DATABASE would recreate it and make the
+  // disappearance regression fail instead of returning NamespaceNotFound.
+  if (creates_target_schema(calls.back())) target_schema_exists = true;
+  if (starts_with(statement, "CREATE TABLE IF NOT EXISTS `test`.`items` ") &&
+      !target_schema_exists)
+    throw namespace_not_found("database disappeared after preparation");
 }
 
 std::string SqlSession::quote(std::string_view text) const {
@@ -174,6 +188,7 @@ TEST_CASE("allowed CREATE authorization precedes collection and metadata creatio
   for (size_t i = 2; i < calls.size(); ++i) {
     const auto& call = calls[i];
     CHECK(call.session == &sql);
+    CHECK_FALSE(creates_target_schema(call));
     if (call.kind == "exec" && starts_with(call.detail, "CREATE TABLE IF NOT EXISTS `test`.`items` "))
       created_table = true;
     if (call.kind == "projection") installed_projection = true;
@@ -185,6 +200,42 @@ TEST_CASE("allowed CREATE authorization precedes collection and metadata creatio
   CHECK(created_table);
   CHECK(installed_projection);
   CHECK(installed_triggers);
+  CHECK(existence.empty());
+}
+
+TEST_CASE("schema disappearing after preparation is never recreated by the collection adapter") {
+  Database database;
+  SqlSession sql;
+  Collection collection(sql, {"test", "items"});
+  database.exists(false);
+  bool prepared = false;
+
+  try {
+    collection.create(false, [&] {
+      CHECK(database.side_effects() == 0);
+      CHECK(target_schema_exists);
+      prepared = true;
+      calls.push_back({"authorize", "table CREATE allowed; schema exists", &sql});
+      // Table-level CREATE permits a new collection in this existing schema.
+      // Concurrent DROP DATABASE then removes it before the adapter's DDL.
+      target_schema_exists = false;
+    });
+    FAIL("the collection adapter recreated a schema after preparation");
+  } catch (const TranslatorError& error) {
+    CHECK(error.code() == 26);
+    CHECK(error.code_name() == "NamespaceNotFound");
+  }
+
+  CHECK(prepared);
+  CHECK_FALSE(target_schema_exists);
+  unsigned table_attempts = 0;
+  for (const auto& call : calls) {
+    CHECK_FALSE(creates_target_schema(call));
+    CHECK(call.kind != "triggers");
+    if (call.kind == "exec" && starts_with(call.detail, "CREATE TABLE IF NOT EXISTS `test`.`items` "))
+      ++table_attempts;
+  }
+  CHECK(table_attempts == 1);
   CHECK(existence.empty());
 }
 

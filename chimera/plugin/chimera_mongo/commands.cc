@@ -261,6 +261,11 @@ void create_collection(Ctx& ctx, Collection& collection) {
   collection.create(/*error_if_exists=*/false, [&] {
     const auto& ns = collection.ns();
     ctx.state.authorize(ns.db, ns.collection, SqlSession::Create);
+    // A table-level CREATE grant does not permit creating its database.
+    // Only the restricted identity may create an absent user schema. If an
+    // existing schema disappears afterward, the engine's CREATE TABLE fails
+    // rather than recreating the schema with internal privileges.
+    ctx.state.prepare_database(ns.db);
   });
 }
 
@@ -1207,11 +1212,23 @@ SqlSession& ConnectionState::sql() {
 SqlSession& ConnectionState::gateway_sql() {
   if (!secured()) return sql();
   if (!gateway_sql_) gateway_sql_ = std::make_unique<SqlSession>(true);
-  const auto& c = authentication_.credential();
-  gateway_sql_->set_identity(trusted_user_.empty() ? c.user : trusted_user_,
-                             trusted_user_.empty() ? c.sql_host : trusted_host_,
-                             trusted_user_.empty() ? c.sql_role : trusted_role_);
+  bind_identity(*gateway_sql_);
   return *gateway_sql_;
+}
+void ConnectionState::bind_identity(SqlSession& session) {
+  const auto& c = authentication_.credential();
+  session.set_identity(trusted_user_.empty() ? c.user : trusted_user_,
+                       trusted_user_.empty() ? c.sql_host : trusted_host_,
+                       trusted_user_.empty() ? c.sql_role : trusted_role_);
+}
+void ConnectionState::prepare_database(const std::string& db) {
+  if (!sql().query("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=" +
+                   sql().quote(db)).rows.empty()) return;
+  // Native CREATE DATABASE checks database/global grants even for IF NOT
+  // EXISTS. Keep its implicit commit away from an open SQL gateway transaction.
+  SqlSession creation(true);
+  if (secured()) bind_identity(creation);
+  creation.exec("CREATE DATABASE IF NOT EXISTS " + quote_identifier(db));
 }
 void ConnectionState::trust_sql_caller(const std::string& user, const std::string& host, const std::string& role) {
   if (user.empty() || host.empty()) throw unauthorized("SQL caller has no named identity");
@@ -1247,10 +1264,6 @@ void ConnectionState::authorize(const std::string& db, const std::string& table,
   if (!allowed(db, table, access)) throw unauthorized("Not authorized on " + db);
   if (!secured()) return;
   const std::string schema = sql().quote(db), name = sql().quote(table);
-  if ((access & SqlSession::Create) &&
-      sql().query("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=" + schema).rows.empty() &&
-      !gateway_sql().allowed(db, "", SqlSession::Create))
-    throw unauthorized("Not authorized to create database " + db);
   // The collection engine manages base tables. A SQL SECURITY INVOKER view
   // must be evaluated by the restricted SQL gateway, never the engine identity.
   if (!table.empty()) {

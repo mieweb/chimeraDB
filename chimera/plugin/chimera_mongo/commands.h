@@ -26,6 +26,8 @@ public:
 
   SqlSession& sql();
   SqlSession& gateway_sql();
+  // Create a missing user schema using an independent caller-identity session.
+  void prepare_database(const std::string& db);
   bool secured() const { return identity_.authentication || !trusted_user_.empty(); }
   Authentication& authentication() { return authentication_; }
   void require_authenticated();
@@ -38,6 +40,7 @@ public:
   int64_t connection_id() const { return connection_id_; }
 
 private:
+  void bind_identity(SqlSession& session);
   const ServerIdentity& identity_;
   int64_t connection_id_;
   std::unique_ptr<SqlSession> sql_, gateway_sql_;

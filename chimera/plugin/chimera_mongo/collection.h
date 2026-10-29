@@ -48,9 +48,10 @@ public:
   static void bootstrap(SqlSession& sql);
 
   bool exists() const;
-  // The caller's CREATE check belongs in the actual missing-table branch,
-  // since a prior command-level existence check can race with SQL DROP.
-  void create(bool error_if_exists, const std::function<void()>& authorize_create);
+  // Check the caller's CREATE grant and prepare any missing database in the
+  // actual missing-table branch. Database creation must use the caller's
+  // restricted identity; this adapter never creates a user schema itself.
+  void create(bool error_if_exists, const std::function<void()>& prepare_create);
   void drop();
 
   Value insert(const bson_t* document);

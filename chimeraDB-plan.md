@@ -711,6 +711,18 @@ Tracked independently of this order:
     table before any DDL even after an earlier successful existence probe.
     Server-free checks pass 24 CLI, ten provisioning, 19 Homebrew packaging and
     nine Homebrew service cases. Clean install/reinstall is gated by package CI.
+  - [x] **AUTH9** Close the database-level variant of the creation race: the
+    collection adapter never creates user schemas with the engine identity.
+    Prepare missing schemas in a fresh session bound to the caller's native
+    account and role, preserving any transaction on the SQL gateway session.
+    A database dropped after preparation makes table creation fail rather than
+    recreating the database. Existing schemas still accept table-only CREATE.
+    Verified on 10.11.18 and 11.8.8: 131 unit cases and nine differential specs
+    per version, all existing demos/regressions, and plaintext plus TLS driver
+    acceptance. A deterministic regression pauses collection bootstrap, drops
+    the schema through a limited SQL account, and verifies it stays absent.
+    Controls cover missing-schema denial, authorized schema creation, and a
+    pending SQL write that remains uncommitted and rolls back after creation.
   Separate follow-up: local SQL-service handles do not report a server
   version, so `mysql_set_character_set()` skips `SET NAMES`. On 10.11 the native
   THD can remain latin1, and non-ASCII namespace literals fail to match UTF-8
