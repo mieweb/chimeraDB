@@ -65,6 +65,7 @@ public:
 private:
   std::string where(const bson_t* filter) const;
   void require_exists() const;
+  std::unique_ptr<SqlSession::TableLock> lock_data(bool writing = false) const;
   void replace_document(const std::string& encoded_id, const bson_t* document);
 
   SqlSession& sql_;

@@ -44,7 +44,8 @@ class @CLASS@ < Formula
     inreplace libexec/"chimeradb-mongo-user", "#!/usr/bin/env python3",
       "#!#{Formula["python@3.13"].opt_bin}/python3.13"
     (bin/"chimeradb-mongo-user").write_env_script libexec/"chimeradb-mongo-user",
-      PATH: "#{maria.opt_bin}:#{HOMEBREW_PREFIX}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      PATH: "#{maria.opt_bin}:#{HOMEBREW_PREFIX}/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      CHIMERA_DEFAULTS_FILE: etc/"#{name}.cnf"
     (bin/"chimeradb").write_env_script libexec/"chimeradb",
       PATH: "#{maria.opt_bin}:#{HOMEBREW_PREFIX}/bin:/usr/bin:/bin:/usr/sbin:/sbin",
       CHIMERA_DEFAULTS_FILE: etc/"#{name}.cnf", CHIMERA_BREW_FORMULA: name

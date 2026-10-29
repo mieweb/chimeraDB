@@ -4,6 +4,9 @@
 mongo-auth.py --user alice -- --protocol=socket --user=root --socket=/path/mysql.sock
 The Mongo password is prompted (or read with --password-stdin), never put in argv.
 The named MariaDB account must already exist. SQL and Mongo passwords are separate.
+CHIMERA_DEFAULTS_FILE selects the SQL client config unless client options specify
+--no-defaults, --defaults-file, or --defaults-extra-file. Explicit connection
+options such as --socket override values in the selected config.
 """
 import argparse
 import getpass
@@ -45,6 +48,38 @@ def literal(value):
     return "X'" + value.hex() + "'"
 
 
+def client_options(options):
+    """Put MariaDB's initial options before connection options, without a shell."""
+    files = {}
+    connection = []
+    no_defaults = False
+    remaining = iter(options)
+    for option in remaining:
+        name, equals, value = option.partition('=')
+        if name in ('--defaults-file', '--defaults-extra-file'):
+            if name in files:
+                raise ValueError('each SQL defaults-file option may be specified only once')
+            if not equals:
+                value = next(remaining, '')
+            if not value or value.startswith('--'):
+                raise ValueError(name + ' requires a file path')
+            files[name] = value
+        elif option == '--no-defaults':
+            no_defaults = True
+        else:
+            connection.append(option)
+    if no_defaults:
+        if files:
+            raise ValueError('--no-defaults cannot be combined with SQL defaults-file options')
+        return ['--no-defaults', *connection]
+    # An explicit file selection replaces the formula's default. In particular,
+    # --defaults-extra-file must not leave a hidden --defaults-file in effect.
+    if not files and os.environ.get('CHIMERA_DEFAULTS_FILE'):
+        files['--defaults-file'] = os.environ['CHIMERA_DEFAULTS_FILE']
+    return [*(name + '=' + files[name] for name in ('--defaults-file', '--defaults-extra-file')
+              if name in files), *connection]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--user', required=True, help='existing MariaDB account name; also the Mongo username')
@@ -66,7 +101,7 @@ def main():
     if args.validate_password:
         saslprep(sys.stdin.read().removesuffix('\n'))
         return
-    command = [args.client, *sql_args, '--batch', '--skip-column-names']
+    command = [args.client, *client_options(sql_args), '--batch', '--skip-column-names']
 
     def sql(statement):
         result = subprocess.run(command, input=statement, text=True, capture_output=True)

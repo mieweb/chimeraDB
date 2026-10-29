@@ -682,6 +682,27 @@ Tracked independently of this order:
     series: default negotiation, failed login, anonymous commands, privilege isolation,
     SQL grants, cursor isolation, revocation, SQL account locking, and TLS verification.
     Packaging installs the provisioning helper; Docker initializes root credentials.
+  - [x] **AUTH7** PR #10 review regressions: hold table metadata locks across
+    base-table validation and collection data access; classify cursor sources in
+    the registry before applying `getMore` exemptions; compare change-stream
+    namespaces byte-for-byte on existing oplogs; forward Homebrew instance
+    defaults into provisioning; bound the entire TLS handshake to 15 seconds.
+    Acceptance covers queued table/view replacement, nested writes and the SQL
+    `mongo()` caller, `$cmd.*` collection revocation, case-insensitive oplog
+    collations, provisioning overrides, and slow TLS clients. Repair the CLI
+    readiness fixtures for the authentication-setting query as part of this group.
+    Verified on 10.11.18 and 11.8.8: 125 unit cases and nine differential specs
+    per version, existing demos/rollback/pruning/gateway regressions, and plaintext
+    plus TLS driver acceptance. Slow/idle handshakes close at 15 seconds while
+    established TLS connections remain usable. Server-free checks pass 24 CLI,
+    nine provisioning, 18 Homebrew packaging and nine Homebrew service cases.
+  Follow-up outside AUTH7: local SQL-service handles do not report a server
+  version, so `mysql_set_character_set()` skips `SET NAMES`. On 10.11 the native
+  THD can remain latin1, and non-ASCII namespace literals fail to match UTF-8
+  metadata. Reproduced through the restricted SQL gateway as well as collection
+  lookup, independently of the new metadata locks. Fix client/server charset
+  agreement while preserving the charset of a borrowed SQL `mongo()` caller;
+  add non-ASCII namespace round-trip coverage on both versions.
   Verification (2026-10-28): native 10.11.18 and 11.8.8 pass 124 unit tests,
   all existing feature demos/regressions and nine differential specs each, plus
   PyMongo 4.19.0 / mongosh 2.5.8 authentication, TLS, grant/credential revocation,

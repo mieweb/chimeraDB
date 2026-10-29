@@ -84,7 +84,8 @@ for _ in $(seq 1 100); do
   kill -0 "$watch_pid" 2>/dev/null || { cat "$watch_out"; die "watcher exited before parking"; }
   reads=$(sql_scalar "SELECT COUNT(*) FROM mysql.general_log
     WHERE command_type = 'Query' AND argument LIKE 'SELECT seq, CONCAT(%'
-      AND LOCATE(CONCAT(' AND ns = ', QUOTE('csregression.$PARK_COLL')), argument) > 0")
+      AND LOCATE(CONCAT(' AND CAST(ns AS BINARY) = CAST(', QUOTE('csregression.$PARK_COLL'),
+                        ' AS BINARY)'), argument) > 0")
   if ((reads >= 2)); then parked=true; break; fi
   sleep 0.1
 done

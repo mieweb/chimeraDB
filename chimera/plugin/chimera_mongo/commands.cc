@@ -578,7 +578,8 @@ Bson cmd_aggregate(Ctx& ctx) {
 
   std::vector<Bson> documents;
   std::string ns_text;
-  if (!stages.empty() && stage_operator(stages.front().get()).first == "$sql") {
+  const bool sql_source = !stages.empty() && stage_operator(stages.front().get()).first == "$sql";
+  if (sql_source) {
     // A `$sql` pipeline never touches a collection, so it runs against the
     // database rather than a namespace and the cursor is named accordingly.
     documents = run_stages(take_sql_source(ctx, stages), stages);
@@ -605,7 +606,9 @@ Bson cmd_aggregate(Ctx& ctx) {
   documents.erase(documents.begin(), documents.begin() + take);
 
   const int64_t cursor_id =
-      documents.empty() ? 0 : CursorRegistry::instance().open(ns_text, std::move(documents), ctx.state.principal());
+      documents.empty() ? 0 : CursorRegistry::instance().open(
+          ns_text, std::move(documents), ctx.state.principal(),
+          sql_source ? CursorSource::Sql : CursorSource::Collection);
   return cursor_reply(cursor_id, ns_text, "firstBatch", first);
 }
 
@@ -1296,8 +1299,13 @@ Bson dispatch_command(const wire::Request& req, ConnectionState& state) noexcept
     if (command == "find" || command == "count" || command == "distinct" || command == "listIndexes")
       state.authorize(req.database, argument, SqlSession::Select);
     if (command == "getMore") {
-      const std::string coll = text_field(req.body.get(), "collection");
-      if (coll.rfind("$cmd.", 0) != 0) state.authorize(req.database, coll, SqlSession::Select);
+      auto id = field(req.body.get(), "getMore");
+      if (!id || !value_is_numeric(id->get()))
+        throw type_mismatch("getMore requires the cursor id as a 64-bit integer");
+      const int64_t cursor_id = static_cast<int64_t>(value_as_double(id->get()));
+      const Namespace ns = parse_namespace(req.database, text_field(req.body.get(), "collection"));
+      if (CursorRegistry::instance().source(cursor_id, ns.text(), state.principal()) != CursorSource::Sql)
+        state.authorize(ns.db, ns.collection, SqlSession::Select);
     }
     if (command == "aggregate") {
       bson_t pipeline;

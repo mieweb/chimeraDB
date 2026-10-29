@@ -6,6 +6,7 @@
 #include <mysql_version.h>
 #include <sql_class.h>
 #include <sql_acl.h>
+#include <mdl.h>
 #include <protocol.h>
 #include <mysql/plugin.h>
 #include <mysql/service_sql.h>
@@ -268,6 +269,42 @@ bool SqlSession::allowed(const std::string& db, const std::string& table, unsign
     granted |= get_table_grant(thd, &target);
   }
   return (granted & wanted) == wanted;
+}
+
+SqlSession::TableLock::~TableLock() {
+  if (ticket_)
+    static_cast<THD*>(thd_)->mdl_context.release_lock(static_cast<MDL_ticket*>(ticket_));
+}
+
+std::unique_ptr<SqlSession::TableLock> SqlSession::lock_table(
+    const std::string& db, const std::string& table, bool writing) {
+  THD* thd = session_thd(handle_);
+  std::string schema = db, name = table;
+  // Match TABLE_LIST's identifier folding, including on case-preserving
+  // filesystems. An alternate spelling must not miss the DDL lock.
+  if (lower_case_table_names) {
+    auto normalize = [](const std::string& value) {
+      const auto& charset = my_charset_utf8mb3_general_ci;
+      std::string folded(value.size() * charset.casedn_multiply(), '\0');
+      folded.resize(charset.casedn(value.data(), value.size(), folded.data(), folded.size()));
+      return folded;
+    };
+    schema = normalize(schema);
+    name = normalize(name);
+  }
+  MDL_request request;
+  MDL_REQUEST_INIT(&request, MDL_key::TABLE, schema.c_str(), name.c_str(),
+                   writing ? MDL_SHARED_WRITE : MDL_SHARED_READ, MDL_EXPLICIT);
+  // Allocate before acquiring a ticket so allocation failure cannot strand an
+  // explicit lock on an engine session or a borrowed SQL caller's THD.
+  std::unique_ptr<TableLock> lock(new TableLock(thd, nullptr));
+  THD* previous = current_thd;
+  set_current_thd(thd);
+  const bool failed = thd->mdl_context.acquire_lock(&request, thd->variables.lock_wait_timeout);
+  set_current_thd(previous);
+  if (failed) throw TranslatorError(24, "LockTimeout", "Could not lock collection metadata");
+  lock->ticket_ = request.ticket;
+  return lock;
 }
 
 std::pair<std::string, std::string> SqlSession::caller_identity() {

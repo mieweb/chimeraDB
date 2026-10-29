@@ -88,3 +88,25 @@ TEST_CASE("materialized and tail cursors are owned by an authenticated principal
   CHECK(tail.after_seq == 0);
   CHECK(cursors.kill(tail_id, "alice", "db.items"));
 }
+
+TEST_CASE("cursor source cannot be inferred from a client-controlled command namespace") {
+  auto& cursors = CursorRegistry::instance();
+  const std::string ns = "db.$cmd.aggregate";
+  std::vector<Bson> collection_docs; collection_docs.emplace_back();
+  const auto collection_id = cursors.open(ns, std::move(collection_docs), "alice");
+  const auto watch_id = cursors.open_tail(ns, TailState{}, "alice");
+  std::vector<Bson> sql_docs; sql_docs.emplace_back();
+  const auto sql_id = cursors.open(ns, std::move(sql_docs), "alice", CursorSource::Sql);
+
+  CHECK(cursors.source(collection_id, ns, "alice") == CursorSource::Collection);
+  CHECK(cursors.source(watch_id, ns, "alice") == CursorSource::Collection);
+  CHECK(cursors.source(sql_id, ns, "alice") == CursorSource::Sql);
+  CHECK_THROWS(cursors.source(sql_id, ns, "bob"));
+  CHECK_THROWS(cursors.source(sql_id, "db.items", "alice"));
+  CHECK_THROWS(cursors.source(sql_id, "other.$cmd.aggregate", "alice"));
+
+  CHECK(cursors.kill(collection_id, "alice", ns));
+  CHECK(cursors.kill(watch_id, "alice", ns));
+  CHECK(cursors.kill(sql_id, "alice", ns));
+  CHECK_THROWS(cursors.source(sql_id, ns, "alice"));
+}

@@ -14,6 +14,8 @@ from pathlib import Path
 from bson import BSON, Binary, Int64
 from pymongo import MongoClient
 from pymongo.errors import OperationFailure, ServerSelectionTimeoutError
+from cursor_auth_regressions import run as run_cursor_auth_regressions
+from table_replacement_regressions import run as run_table_replacement_regressions
 
 port = int(os.environ['CHIMERA_AUTH_PORT'])
 options = dict(directConnection=True, serverSelectionTimeoutMS=2000, connectTimeoutMS=2000)
@@ -32,7 +34,8 @@ def client(user=None, password='mongo-test-password', source='admin', **extra):
 
 def sql(statement):
     return subprocess.check_output([os.environ['CHIMERA_AUTH_SQL'], '--no-defaults',
-        '--socket=' + os.environ['CHIMERA_AUTH_SOCKET'], '--user=root', '-NBe', statement], text=True).strip()
+        '--socket=' + os.environ['CHIMERA_AUTH_SOCKET'], '--user=root', '-NBe', statement],
+        text=True, timeout=15).strip()
 
 
 def rejected(label, callback, code=13):
@@ -121,6 +124,7 @@ try:
 finally:
     sql('SET GLOBAL chimera_mongo_sql_writes=OFF')
 print('  ok  roles, table grants, implicit creation and SQL view isolation')
+run_table_replacement_regressions(writer, reader, sql, rejected)
 
 
 batch = writer.auth_test_allowed.command({'find': 'items', 'batchSize': 1})
@@ -157,6 +161,8 @@ finally:
     sql("REVOKE SELECT ON chimera_meta.oplog FROM 'auth_test_reader'@'localhost'")
 print('  ok  authenticated change streams, raw oplog grants and SQL cursor isolation')
 
+
+run_cursor_auth_regressions(writer, reader, sql, rejected)
 
 # GRANT changes affect an already-authenticated pool, not only new connections.
 sql("REVOKE SELECT ON auth_test_allowed.* FROM 'auth_test_reader'@'localhost'")

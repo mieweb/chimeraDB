@@ -1,10 +1,13 @@
 #include "listener.h"
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <algorithm>
+#include <chrono>
 #include <memory>
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -22,9 +25,47 @@ namespace {
 // shutdown free of the fd-reuse race that closing a socket out from under a
 // blocked accept() would introduce, and 200 ms is invisible at shutdown.
 constexpr int kAcceptPollMs = 200;
+constexpr auto kTlsHandshakeTimeout = std::chrono::seconds(15);
 
 std::string errno_message(const char* what) {
   return std::string(what) + ": " + strerror(errno);
+}
+
+bool accept_tls(SSL* tls, int fd, const std::atomic<bool>& stopping) {
+  // Socket I/O timeouts restart for every read/write. A client trickling a
+  // partial ClientHello could therefore occupy a connection thread forever.
+  // Nonblocking TLS keeps every retry under one monotonic deadline instead.
+  const auto deadline = std::chrono::steady_clock::now() + kTlsHandshakeTimeout;
+  const int flags = ::fcntl(fd, F_GETFL, 0);
+  if (flags < 0 || ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return false;
+
+  while (!stopping.load()) {
+    if (std::chrono::steady_clock::now() >= deadline) return false;
+    ERR_clear_error();
+    const int result = SSL_accept(tls);
+    if (result == 1) {
+      // Framing uses blocking SSL_read/SSL_write after the handshake. Do not
+      // leave O_NONBLOCK or a handshake timeout on the established connection.
+      return !stopping.load() && std::chrono::steady_clock::now() < deadline &&
+             ::fcntl(fd, F_SETFL, flags) == 0;
+    }
+    const int error = SSL_get_error(tls, result);
+    short events;
+    if (error == SSL_ERROR_WANT_READ) events = POLLIN;
+    else if (error == SSL_ERROR_WANT_WRITE) events = POLLOUT;
+    else return false;
+
+    const auto remaining = deadline - std::chrono::steady_clock::now();
+    if (remaining <= decltype(remaining)::zero()) return false;
+    const auto wait_ms = std::chrono::ceil<std::chrono::milliseconds>(remaining).count();
+    // Re-check shutdown even when the peer sends nothing. EINTR retries also
+    // recalculate the remaining time, so signals cannot extend the deadline.
+    struct pollfd waiting = {fd, events, 0};
+    const int ready = ::poll(&waiting, 1, std::min<int64_t>(wait_ms, kAcceptPollMs));
+    if (ready < 0 && errno != EINTR) return false;
+    if (ready > 0 && (waiting.revents & (POLLERR | POLLHUP | POLLNVAL))) return false;
+  }
+  return false;
 }
 
 }  // namespace
@@ -151,15 +192,9 @@ void Listener::serve(int fd, int64_t connection_id) {
   std::unique_ptr<SSL, decltype(&SSL_free)> tls(nullptr, SSL_free);
   if (tls_context_) {
     tls.reset(SSL_new(static_cast<SSL_CTX*>(tls_context_)));
-    struct timeval timeout{15, 0};
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
-    if (!tls || SSL_set_fd(tls.get(), fd) != 1 || SSL_accept(tls.get()) != 1) {
+    if (!tls || SSL_set_fd(tls.get(), fd) != 1 || !accept_tls(tls.get(), fd, stopping_)) {
       forget(fd); ::close(fd); return;
     }
-    timeout = {0, 0};
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
   }
   SqlThreadScope thread_scope;
   ConnectionState state(identity_, connection_id);

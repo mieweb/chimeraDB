@@ -56,5 +56,6 @@ if CHIMERA_MONGO_TLS_CA="$tls/cert.pem" CHIMERA_MONGO_TLS_SERVER_NAME=wrong.exam
   "${CHIMERA_OUT:-$CHIMERA_DIR/.run}/health/chimeradb-health" 127.0.0.1 "$MONGO_PORT"; then
   die 'health probe accepted a certificate hostname mismatch'
 fi
+"$CHIMERA_DIR/scripts/test-mongo-tls-deadline.sh" --server "$SERVER_VERSION"
 "$CHIMERA_DIR/scripts/test-mongo-auth-startup.sh" --server "$SERVER_VERSION"
 note "Mongo authentication and TLS passed on $SERVER_VERSION"

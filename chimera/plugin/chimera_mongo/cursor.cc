@@ -27,7 +27,8 @@ void CursorRegistry::expire_idle() {
   }
 }
 
-int64_t CursorRegistry::open(std::string ns, std::vector<Bson> remaining, const std::string& owner) {
+int64_t CursorRegistry::open(std::string ns, std::vector<Bson> remaining, const std::string& owner,
+                             CursorSource source) {
   if (remaining.empty()) return 0;
   std::lock_guard<std::mutex> guard(mutex_);
   expire_idle();
@@ -35,6 +36,7 @@ int64_t CursorRegistry::open(std::string ns, std::vector<Bson> remaining, const 
   Entry entry;
   entry.ns = std::move(ns);
   entry.owner = owner;
+  entry.source = source;
   entry.remaining = std::move(remaining);
   entry.last_used_seconds = now_seconds();
   cursors_.emplace(id, std::move(entry));
@@ -53,6 +55,15 @@ int64_t CursorRegistry::open_tail(std::string ns, TailState state, const std::st
   entry.tail = std::move(state);
   cursors_.emplace(id, std::move(entry));
   return id;
+}
+
+CursorSource CursorRegistry::source(int64_t id, const std::string& ns, const std::string& owner) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto it = cursors_.find(id);
+  if (it == cursors_.end() || it->second.ns != ns || it->second.owner != owner) {
+    throw cursor_not_found("cursor id " + std::to_string(id) + " is not on " + ns);
+  }
+  return it->second.source;
 }
 
 bool CursorRegistry::tail_state(int64_t id, const std::string& ns, TailState* state, const std::string& owner) {

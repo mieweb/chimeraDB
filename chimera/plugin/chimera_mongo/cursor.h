@@ -37,6 +37,10 @@ struct TailState {
   }
 };
 
+// SQL-source results have already passed the SQL gateway's native checks.
+// Keep that origin with the cursor: a real collection may also be named $cmd.*.
+enum class CursorSource { Collection, Sql };
+
 // Cursors are materialized: a find runs to completion and the remaining
 // documents wait here for getMore. That trades memory for exact BSON ordering
 // semantics, which MariaDB's JSON functions cannot express (see M8's
@@ -47,10 +51,15 @@ public:
 
   // Returns 0 when nothing is left over, which is how a driver knows the cursor
   // is already exhausted.
-  int64_t open(std::string ns, std::vector<Bson> remaining, const std::string& owner = "");
+  int64_t open(std::string ns, std::vector<Bson> remaining, const std::string& owner = "",
+               CursorSource source = CursorSource::Collection);
 
   // A tailing cursor never reports itself exhausted, so the id is always real.
   int64_t open_tail(std::string ns, TailState state, const std::string& owner = "");
+
+  // Throws CursorNotFound unless both namespace and principal match. Callers
+  // use this trusted origin to decide which privileges a getMore must recheck.
+  CursorSource source(int64_t id, const std::string& ns, const std::string& owner = "");
 
   // Fills `state` and returns true when the cursor tails; the caller does the
   // reading, because only it holds a SQL session.
@@ -68,6 +77,7 @@ private:
   struct Entry {
     std::string ns;
     std::string owner;
+    CursorSource source = CursorSource::Collection;
     std::vector<Bson> remaining;
     size_t offset = 0;
     int64_t last_used_seconds = 0;

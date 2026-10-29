@@ -150,6 +150,13 @@ results. Authentication uses `saslStart`/`saslContinue` and advertises only
 `SCRAM-SHA-256`. Speculative authentication safely falls back to ordinary SASL;
 SCRAM-SHA-1, X.509 login and Mongo role administration are not advertised.
 
+Collection data access holds native metadata locks while validating and using
+the base table, preventing concurrent SQL DDL from substituting a view with
+engine privileges. Collection cursors recheck `SELECT` on `getMore`, including
+collections whose names begin with `$cmd.`; the materialized SQL-cursor exception
+uses private cursor metadata. Change streams compare namespace bytes exactly,
+even when an existing oplog uses a case-insensitive collation.
+
 For encrypted connections, set both of these startup options:
 
 ```ini
@@ -160,6 +167,9 @@ chimera-mongo-tls-key=/etc/chimeradb/server-key.pem
 
 The key must be readable by the MariaDB service account. With those options, every
 Mongo connection requires TLS 1.2 or newer; there is no mixed plaintext/TLS mode.
+An incomplete TLS handshake is closed after 15 seconds overall, including clients
+that continue sending partial records. Established connections have no handshake
+deadline.
 Clients verify the server certificate normally:
 
 ```sh

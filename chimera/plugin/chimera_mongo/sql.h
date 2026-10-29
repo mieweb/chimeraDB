@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -38,6 +39,19 @@ struct ResultSet {
 // (`array_elements` among them) and must not leak into the rest of the plugin.
 class SqlSession {
 public:
+  class TableLock {
+  public:
+    ~TableLock();
+    TableLock(const TableLock&) = delete;
+    TableLock& operator=(const TableLock&) = delete;
+
+  private:
+    friend class SqlSession;
+    TableLock(void* thd, void* ticket) : thd_(thd), ticket_(ticket) {}
+    void* thd_;
+    void* ticket_;
+  };
+
   SqlSession();
   explicit SqlSession(bool independent);
   ~SqlSession();
@@ -65,6 +79,10 @@ public:
   enum Access : unsigned { Select=1, Insert=2, Update=4, Delete=8, Create=16,
                            Drop=32, Index=64, Alter=128 };
   bool allowed(const std::string& db, const std::string& table, unsigned access);
+  // Protect the table's identity across type validation and data statements.
+  // Explicit duration survives each SQL-service statement's autocommit cleanup.
+  std::unique_ptr<TableLock> lock_table(const std::string& db, const std::string& table,
+                                      bool writing = false);
   static std::pair<std::string, std::string> caller_identity();
   static std::string caller_role();
 

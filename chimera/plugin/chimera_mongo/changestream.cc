@@ -46,7 +46,10 @@ OplogBatch read_changestream(SqlSession& sql, const Namespace& ns, uint64_t afte
   ResultSet rows = sql.query(
       sql.render("SELECT seq, " + std::string(kEventExpr) +
                      " AS event FROM chimera_meta.oplog WHERE seq > " +
-                     std::to_string(after_seq) + " AND ns = ? ORDER BY seq ASC LIMIT " +
+                     // Namespace identity is byte-exact even when an existing
+                     // oplog inherited a case-insensitive schema collation.
+                     std::to_string(after_seq) +
+                     " AND CAST(ns AS BINARY) = CAST(? AS BINARY) ORDER BY seq ASC LIMIT " +
                      std::to_string(limit),
                  {Param{ns.text()}}));
 
