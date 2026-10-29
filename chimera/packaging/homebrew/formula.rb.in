@@ -9,7 +9,8 @@ class @CLASS@ < Formula
   depends_on "bison" => :build
   depends_on "cmake" => :build
   depends_on "ninja" => :build
-  depends_on "openssl@3" => :build
+  depends_on "openssl@3"
+  depends_on "python@3.13"
   depends_on "pkgconf" => :build
   depends_on "mariadb@@SERVER@"
   depends_on "mongo-c-driver"
@@ -40,6 +41,11 @@ class @CLASS@ < Formula
              "--mariadb-prefix", maria.opt_prefix, "--prefix", prefix,
              "--build-dir", buildpath/"homebrew-build"
     end
+    inreplace libexec/"chimeradb-mongo-user", "#!/usr/bin/env python3",
+      "#!#{Formula["python@3.13"].opt_bin}/python3.13"
+    (bin/"chimeradb-mongo-user").write_env_script libexec/"chimeradb-mongo-user",
+      PATH: "#{maria.opt_bin}:#{HOMEBREW_PREFIX}/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      CHIMERA_DEFAULTS_FILE: etc/"#{name}.cnf"
     (bin/"chimeradb").write_env_script libexec/"chimeradb",
       PATH: "#{maria.opt_bin}:#{HOMEBREW_PREFIX}/bin:/usr/bin:/bin:/usr/sbin:/sbin",
       CHIMERA_DEFAULTS_FILE: etc/"#{name}.cnf", CHIMERA_BREW_FORMULA: name
@@ -88,7 +94,7 @@ class @CLASS@ < Formula
       Data: #{var}/#{name} (preserved on uninstall).
       The service initializes this dedicated data directory; keep the datadir
       setting at this path. Port and listener settings can be customized.
-      The Mongo listener has no authentication; keep it on loopback.
+      The Mongo listener requires SCRAM-SHA-256; provision credentials with chimeradb-mongo-user.
       Do not also start mariadb@@SERVER@ on these ports.
 
       After upgrading mariadb@@SERVER@, rebuild this source-only plugin:

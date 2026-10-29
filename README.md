@@ -42,9 +42,13 @@ Existing source builds remain the verified development path; see
 implemented recipes from tested and published artifacts. Fedora/RHEL and Ubuntu
 packages are outside the initial delivery scope.
 
-The Mongo listener has no authentication. Native installs bind it to loopback;
-the Docker Compose recipe publishes both protocols only on host loopback.
-After setup, Mongo clients use `mongosh mongodb://127.0.0.1:27017/appdb`.
+The Mongo listener requires **SCRAM-SHA-256 authentication**. Native installs bind it
+to loopback; the Docker Compose recipe publishes both protocols on host loopback.
+Create an application SQL account, grant its database access, then use
+`chimeradb-mongo-user --user alice -- --protocol=socket --user=root` to provision its
+separate Mongo password. Mongo clients then use
+`mongosh 'mongodb://alice@127.0.0.1:27017/appdb?authSource=admin' --password`.
+See [authentication, privileges, rotation and TLS](chimera/README.md#mongo-authentication-and-tls).
 SQL authentication depends on the installation route:
 
 - **Docker:** `mariadb --skip-ssl -h127.0.0.1 -P3306 -uroot -p`, using the
@@ -84,8 +88,8 @@ Running Meteor? Point it at ChimeraDB and reactivity just works — oplog tailin
 included:
 
 ```sh
-export MONGO_URL="mongodb://127.0.0.1:27017/meteor"
-export MONGO_OPLOG_URL="mongodb://127.0.0.1:27017/local"
+export MONGO_URL="mongodb://alice:URL_ENCODED_PASSWORD@127.0.0.1:27017/meteor?authSource=admin"
+export MONGO_OPLOG_URL="mongodb://alice:URL_ENCODED_PASSWORD@127.0.0.1:27017/local?authSource=admin"
 meteor run
 ```
 
@@ -387,8 +391,8 @@ oplog tailing tuned for Meteor.
 
 ## Roadmap
 
-Wire-level multi-document transactions (they map naturally onto InnoDB), SCRAM
-authentication on the Mongo listener, eager auto-projection policies, a
+Wire-level multi-document transactions (they map naturally onto InnoDB),
+eager auto-projection policies, a
 filter→SQL fast path, and `chimerash` — a dual-language REPL that accepts naked
 SQL *and* naked mongosh at one prompt — are tracked in
 [chimeraDB-plan.md](chimeraDB-plan.md) (Milestone 8). Contributions welcome —

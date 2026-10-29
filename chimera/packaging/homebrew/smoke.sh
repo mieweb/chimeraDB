@@ -74,6 +74,10 @@ uri="mongodb://127.0.0.1:$mongo_port/?directConnection=true&serverSelectionTimeo
 sql -e 'CREATE DATABASE package_smoke; USE package_smoke; SELECT mongo('\''db.docs.insertOne({_id:"persisted",value:"brew"})'\'');' >/dev/null
 [[ $(sql -e 'SELECT COUNT(*) FROM package_smoke.docs') == 1 ]] || die 'gateway insert did not reach SQL'
 [[ $(sql -e "SELECT COUNT(*) FROM chimera_meta.oplog WHERE ns='package_smoke.docs'") == 1 ]] || die 'gateway insert did not reach oplog'
+printf '%s\n' brew-smoke-test-password | "$prefix/libexec/chimeradb-mongo-user" \
+  --user "$(id -un)" --password-stdin --client "$server_prefix/bin/mariadb" -- \
+  --defaults-file="$CHIMERA_DEFAULTS_FILE" --protocol=socket --user="$(id -un)"
+uri="mongodb://$(id -un):brew-smoke-test-password@127.0.0.1:$mongo_port/?authSource=admin&directConnection=true&serverSelectionTimeoutMS=5000"
 "$prefix/libexec/chimeradb-wire-smoke" "$uri"
 [[ $(sql -e 'SELECT COUNT(*) FROM package_smoke.wire_docs') == 1 ]] || die 'driver insert did not reach SQL'
 cleanup

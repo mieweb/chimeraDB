@@ -4,6 +4,8 @@
 	dh $@ --buildsystem=none
 
 override_dh_auto_install:
+	install -D -m 755 chimera/scripts/mongo-auth.py debian/chimeradb-common/usr/bin/chimeradb-mongo-user
+	install -D -m 644 chimera/sql/auth.sql debian/chimeradb-common/usr/share/chimeradb/sql/auth.sql
 	install -D -m 755 chimera/cli/chimeradb debian/chimeradb-common/usr/bin/chimeradb
 	install -D -m 755 $(CHIMERA_HEALTH) debian/chimeradb-common/usr/libexec/chimeradb-health
 	install -D -m 644 chimera/sql/catalog.sql debian/chimeradb-common/usr/share/chimeradb/sql/catalog.sql

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -47,7 +48,10 @@ public:
   static void bootstrap(SqlSession& sql);
 
   bool exists() const;
-  void create(bool error_if_exists);
+  // Check the caller's CREATE grant and prepare any missing database in the
+  // actual missing-table branch. Database creation must use the caller's
+  // restricted identity; this adapter never creates a user schema itself.
+  void create(bool error_if_exists, const std::function<void()>& prepare_create);
   void drop();
 
   Value insert(const bson_t* document);
@@ -65,6 +69,7 @@ public:
 private:
   std::string where(const bson_t* filter) const;
   void require_exists() const;
+  std::unique_ptr<SqlSession::TableLock> lock_data(bool writing = false) const;
   void replace_document(const std::string& encoded_id, const bson_t* document);
 
   SqlSession& sql_;

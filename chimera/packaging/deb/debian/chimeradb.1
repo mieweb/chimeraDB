@@ -34,8 +34,15 @@ status does not infer the Mongo endpoint from the SQL host. Set
 CHIMERA_MONGO_PORT too when its port differs from the server's configured Mongo
 port, as with a forwarded or separate endpoint.
 .SH SECURITY
-The Mongo listener has no authentication and defaults to 127.0.0.1:27017.
-Do not make this endpoint publicly reachable.
+The Mongo listener requires SCRAM-SHA-256 and defaults to 127.0.0.1:27017.
+Create a MariaDB account and grant application database privileges, then run
+chimeradb-mongo-user --user NAME -- [mariadb client options] as a SQL
+administrator to provision its separate Mongo password. The helper prompts;
+--remove revokes the credential. Remote binds require authentication and TLS
+unless an explicit insecure-bind override is set.
+For TLS readiness use CHIMERA_MONGO_TLS_CA=/path/to/ca.pem, or
+CHIMERA_MONGO_TLS=ON with system trust roots. Certificate name verification
+uses CHIMERA_MONGO_TLS_SERVER_NAME when supplied, otherwise the endpoint host.
 .SH UPGRADES AND REMOVAL
 The plugin package requires the exact MariaDB version it was built against.
 Install a rebuilt plugin together with any MariaDB server update.

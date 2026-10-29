@@ -93,7 +93,7 @@ cmd_setup() {
 }
 
 cmd_status() {
-  local server plugin port bind catalog udf health ready=0
+  local server plugin port bind catalog udf health authentication ready=0
   server=$(scalar 'SELECT VERSION()')
   [[ -n $server ]] || die "cannot reach the server — pass the same options you would give the mariadb client"
   printf '  server    %s\n' "$server"
@@ -106,10 +106,13 @@ cmd_status() {
     port=$(scalar 'SELECT @@chimera_mongo_port')
     bind=$(scalar 'SELECT @@chimera_mongo_bind')
     printf '  mongo     %s on %s:%s\n' "$plugin" "$bind" "$port"
-    # The listener has no authentication yet (issue #5), so a non-loopback bind
-    # is worth saying out loud every single time it is seen.
-    [[ $bind == 127.* || $bind == localhost ]] ||
-      printf '  WARNING   %s is not loopback and the listener authenticates nobody\n' "$bind"
+    authentication=$(scalar 'SELECT @@chimera_mongo_auth')
+    if [[ $authentication == 1 || $authentication == ON ]]; then
+      printf '  auth      SCRAM-SHA-256 required\n'
+    else
+      [[ $bind == 127.* || $bind == localhost ]] ||
+        printf '  WARNING   %s is not loopback and the listener authenticates nobody\n' "$bind"
+    fi
     if [[ $plugin != ACTIVE ]]; then
       ready=1
     elif health=$(probe_mongo "$bind" "$port" 2>&1); then

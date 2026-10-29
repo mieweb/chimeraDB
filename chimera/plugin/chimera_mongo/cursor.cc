@@ -27,25 +27,29 @@ void CursorRegistry::expire_idle() {
   }
 }
 
-int64_t CursorRegistry::open(std::string ns, std::vector<Bson> remaining) {
+int64_t CursorRegistry::open(std::string ns, std::vector<Bson> remaining, const std::string& owner,
+                             CursorSource source) {
   if (remaining.empty()) return 0;
   std::lock_guard<std::mutex> guard(mutex_);
   expire_idle();
   const int64_t id = next_id_++;
   Entry entry;
   entry.ns = std::move(ns);
+  entry.owner = owner;
+  entry.source = source;
   entry.remaining = std::move(remaining);
   entry.last_used_seconds = now_seconds();
   cursors_.emplace(id, std::move(entry));
   return id;
 }
 
-int64_t CursorRegistry::open_tail(std::string ns, TailState state) {
+int64_t CursorRegistry::open_tail(std::string ns, TailState state, const std::string& owner) {
   std::lock_guard<std::mutex> guard(mutex_);
   expire_idle();
   const int64_t id = next_id_++;
   Entry entry;
   entry.ns = std::move(ns);
+  entry.owner = owner;
   entry.last_used_seconds = now_seconds();
   entry.tailing = true;
   entry.tail = std::move(state);
@@ -53,23 +57,32 @@ int64_t CursorRegistry::open_tail(std::string ns, TailState state) {
   return id;
 }
 
-bool CursorRegistry::tail_state(int64_t id, const std::string& ns, TailState* state) {
+CursorSource CursorRegistry::source(int64_t id, const std::string& ns, const std::string& owner) {
   std::lock_guard<std::mutex> guard(mutex_);
   auto it = cursors_.find(id);
-  if (it == cursors_.end() || it->second.ns != ns || !it->second.tailing) return false;
+  if (it == cursors_.end() || it->second.ns != ns || it->second.owner != owner) {
+    throw cursor_not_found("cursor id " + std::to_string(id) + " is not on " + ns);
+  }
+  return it->second.source;
+}
+
+bool CursorRegistry::tail_state(int64_t id, const std::string& ns, TailState* state, const std::string& owner) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto it = cursors_.find(id);
+  if (it == cursors_.end() || it->second.ns != ns || it->second.owner != owner || !it->second.tailing) return false;
   it->second.last_used_seconds = now_seconds();
   *state = it->second.tail.clone();
   return true;
 }
 
-void CursorRegistry::advance_tail(int64_t id, uint64_t after_seq) {
+void CursorRegistry::advance_tail(int64_t id, uint64_t after_seq, const std::string& owner) {
   std::lock_guard<std::mutex> guard(mutex_);
   auto it = cursors_.find(id);
-  if (it != cursors_.end()) it->second.tail.after_seq = after_seq;
+  if (it != cursors_.end() && it->second.owner == owner) it->second.tail.after_seq = after_seq;
 }
 
 std::vector<Bson> CursorRegistry::next_batch(int64_t id, const std::string& ns,
-                                             int32_t batch_size, bool* exhausted) {
+                                             int32_t batch_size, bool* exhausted, const std::string& owner) {
   std::lock_guard<std::mutex> guard(mutex_);
   auto it = cursors_.find(id);
   if (it == cursors_.end()) {
@@ -77,7 +90,7 @@ std::vector<Bson> CursorRegistry::next_batch(int64_t id, const std::string& ns,
   }
   // A cursor belongs to the namespace it was opened on; honouring that keeps a
   // mismatched getMore from silently returning another collection's documents.
-  if (it->second.ns != ns) {
+  if (it->second.ns != ns || it->second.owner != owner) {
     throw cursor_not_found("cursor id " + std::to_string(id) + " is not on " + ns);
   }
 
@@ -94,9 +107,12 @@ std::vector<Bson> CursorRegistry::next_batch(int64_t id, const std::string& ns,
   return batch;
 }
 
-bool CursorRegistry::kill(int64_t id) {
+bool CursorRegistry::kill(int64_t id, const std::string& owner, const std::string& ns) {
   std::lock_guard<std::mutex> guard(mutex_);
-  return cursors_.erase(id) > 0;
+  auto it = cursors_.find(id);
+  if (it == cursors_.end() || it->second.owner != owner || (!ns.empty() && it->second.ns != ns)) return false;
+  cursors_.erase(it);
+  return true;
 }
 
 void CursorRegistry::kill_all() {

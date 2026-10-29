@@ -66,7 +66,7 @@ kill "$idle_client" 2>/dev/null || true
 wait "$idle_client" 2>/dev/null || true
 if grep -q 'Shutdown complete' "$ERRLOG"; then shutdown_clean=yes; else shutdown_clean=no; fi
 check_eq "shutdown completed" "$shutdown_clean" "yes"
-"$CHIMERA_DIR/scripts/run-server.sh" --server "$SERVER_VERSION" >/dev/null
+"$CHIMERA_DIR/scripts/run-server.sh" --server "$SERVER_VERSION" --no-auth >/dev/null
 chimera_require_running
 
 note "demo-m3 passed on $SERVER_VERSION"

@@ -44,3 +44,27 @@ target_include_directories(oplog_pruning_tests PRIVATE ../../plugin/chimera_mong
 target_link_libraries(oplog_pruning_tests PRIVATE chimera_translator doctest::doctest Threads::Threads)
 target_compile_options(oplog_pruning_tests PRIVATE -Wall -Wextra)
 doctest_discover_tests(oplog_pruning_tests)
+
+# Authentication crypto/state and cursor isolation, independently of MariaDB.
+find_package(OpenSSL REQUIRED)
+add_executable(scram_tests
+  main.cpp test_scram.cpp
+  ../../plugin/chimera_mongo/scram.cc
+  ../../plugin/chimera_mongo/cursor.cc
+)
+target_include_directories(scram_tests PRIVATE ../../plugin/chimera_mongo)
+target_link_libraries(scram_tests PRIVATE chimera_translator doctest::doctest OpenSSL::Crypto Threads::Threads)
+target_compile_options(scram_tests PRIVATE -Wall -Wextra)
+doctest_discover_tests(scram_tests)
+
+# Exercise creation authorization in the real collection adapter without a
+# server. SQL and metadata helpers record side effects instead of running DDL.
+add_executable(collection_creation_tests
+  main.cpp
+  test_collection_creation.cpp
+  ../../plugin/chimera_mongo/collection.cc
+)
+target_include_directories(collection_creation_tests PRIVATE ../../plugin/chimera_mongo)
+target_link_libraries(collection_creation_tests PRIVATE chimera_translator doctest::doctest)
+target_compile_options(collection_creation_tests PRIVATE -Wall -Wextra)
+doctest_discover_tests(collection_creation_tests)

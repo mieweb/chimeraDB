@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start a chimera MariaDB instance from its installed layout.
 #
-#   run-server.sh --server 10.11|11.8 [--fresh] [--no-mongo]
+#   run-server.sh --server 10.11|11.8 [--fresh] [--no-mongo] [--no-auth] [--tls-cert PEM --tls-key PEM]
 #
 # Initializes the datadir on first use, then starts mariadbd on the port this
 # version owns (see chimeraDB-plan.md "Dev port conventions"). If the
@@ -13,11 +13,21 @@ source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 fresh=false
 with_mongo=true
+mongo_auth=ON
+tls_cert=""
+tls_key=""
+mongo_bind=127.0.0.1
+insecure_bind=OFF
 chimera_parse_server "$@"
 set -- "${CHIMERA_ARGS[@]+"${CHIMERA_ARGS[@]}"}"
 while (($#)); do
   case "$1" in
     --fresh) fresh=true; shift ;;
+    --mongo-bind) mongo_bind="${2:?missing bind address}"; shift 2 ;;
+    --insecure-bind) insecure_bind=ON; shift ;;
+    --no-auth) mongo_auth=OFF; shift ;;
+    --tls-cert) tls_cert="${2:?missing certificate}"; shift 2 ;;
+    --tls-key) tls_key="${2:?missing key}"; shift 2 ;;
     --no-mongo) with_mongo=false; shift ;;
     *) die "unknown argument '$1'" ;;
   esac
@@ -52,7 +62,12 @@ if $with_mongo && [[ -f $SERVER_DIST/lib/plugin/chimera_mongo.so ]]; then
   mongo_args=(--plugin-maturity=experimental
               --plugin-load-add=chimera_mongo
               --chimera-mongo-port="$MONGO_PORT"
-              --chimera-mongo-bind=127.0.0.1)
+              --chimera-mongo-bind="$mongo_bind"
+              --chimera-mongo-insecure-bind="$insecure_bind"
+              --chimera-mongo-auth="$mongo_auth")
+  if [[ -n $tls_cert || -n $tls_key ]]; then
+    mongo_args+=(--chimera-mongo-tls-cert="$tls_cert" --chimera-mongo-tls-key="$tls_key")
+  fi
   note "loading chimera_mongo on mongo port $MONGO_PORT"
 fi
 

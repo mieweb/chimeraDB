@@ -13,7 +13,7 @@ CLI="$work/package/bin/chimeradb"
 export FAKE_WORK="$work"
 export FAKE_PLUGIN=ACTIVE FAKE_CATALOG=1 FAKE_UDF=1 FAKE_CONNECT=1
 export FAKE_EXPECT_DEFAULTS="" FAKE_SOCKET='--socket=/tmp/chimera test.sock'
-export FAKE_MONGO=1 FAKE_BIND=127.0.0.1 FAKE_PORT=27017
+export FAKE_MONGO=1 FAKE_BIND=127.0.0.1 FAKE_PORT=27017 FAKE_AUTH=1
 export FAKE_CONNECTION='Localhost via UNIX socket' FAKE_EXPECT_HOST=127.0.0.1 FAKE_EXPECT_PORT=27017
 unset CHIMERA_DEFAULTS_FILE CHIMERA_MONGO_HOST CHIMERA_MONGO_PORT
 
@@ -58,6 +58,7 @@ case $4 in
   "SELECT plugin_status FROM information_schema.plugins WHERE plugin_name = 'chimera_mongo'") printf '%s\n' "$FAKE_PLUGIN" ;;
   'SELECT @@chimera_mongo_port') echo "$FAKE_PORT" ;;
   'SELECT @@chimera_mongo_bind') echo "$FAKE_BIND" ;;
+  'SELECT @@chimera_mongo_auth') echo "$FAKE_AUTH" ;;
   "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = 'chimera_meta'") echo "$FAKE_CATALOG" ;;
   "SELECT COUNT(*) FROM mysql.func WHERE name = 'mongo'") echo "$FAKE_UDF" ;;
   *) bad_argument "unexpected query: $4" ;;
@@ -106,6 +107,17 @@ check_cli() {
 
 check_cli 0 'active plugin with successful Mongo ping and complete setup is ready'
 [[ -s $work/health-calls ]]
+grep -q 'SCRAM-SHA-256 required' "$work/output"
+export FAKE_AUTH=ON
+check_cli 0 'text ON authentication setting reports SCRAM as required'
+grep -q 'SCRAM-SHA-256 required' "$work/output"
+export FAKE_AUTH=0
+check_cli 0 'authentication disabled on loopback remains ready without a warning'
+! grep -q 'SCRAM-SHA-256 required\|authenticates nobody' "$work/output"
+export FAKE_BIND=0.0.0.0
+check_cli 0 'authentication disabled on a wildcard bind warns about anonymous access'
+grep -q 'WARNING.*authenticates nobody' "$work/output"
+export FAKE_AUTH=1 FAKE_BIND=127.0.0.1
 export FAKE_MONGO=0
 check_cli 1 'active plugin with dead Mongo listener is not ready'
 check_cli 1 'service start fails readiness when plugin is active but Mongo is dead' start

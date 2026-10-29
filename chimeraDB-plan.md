@@ -661,10 +661,86 @@ In order:
 Tracked independently of this order:
 
 - **SCRAM-SHA-256 auth — [#5](https://github.com/mieweb/chimeraDB/issues/5)**:
-  release-gating for any non-loopback deployment. Stage 1 (enforce rather than advise)
-  is done: a non-loopback bind refuses to start without `chimera_mongo_insecure_bind=ON`,
-  the opt-in is logged loudly, and `chimeraSql`/`$sql` are disabled on such a bind.
-  Stages 2 (SCRAM itself) and 3 (TLS) remain.
+  - [x] **AUTH1** Enforce network exposure: loopback by default; remote binding
+    requires authentication and TLS or an explicit, logged insecure opt-in.
+  - [x] **AUTH2** SCRAM-SHA-256 `saslStart`/`saslContinue`, mechanism advertisement,
+    RFC 7677 known-answer tests, strict conversation parsing and generic failure replies.
+    Speculative authentication falls back to standard SASL; no SHA-1 promise.
+  - [x] **AUTH3** One identity domain: Mongo username maps to an exact MariaDB
+    user/host, with a separate private SCRAM verifier store. Admin-only helper
+    provisions/rotates/revokes passwords with SASLprep; auth is ON by default and
+    an unprovisioned instance denies data access. Existing connections revalidate
+    verifier revision and account status on every data command.
+  - [x] **AUTH4** Native MariaDB global/database/table grants and default roles
+    authorize collection operations; internal metadata stays private. `chimeraSql`
+    and `$sql` execute under a separate restricted native identity. SQL `mongo()`
+    preserves caller identity/role. Listings filter visibility; cursors enforce
+    principal/revision ownership. Internal schemas/views use the restricted SQL head.
+  - [x] **AUTH5** TLS 1.2+ on the listener with certificate/key validation, encrypted
+    framing and bounded handshakes. Readiness probes verify TLS certificates and names.
+  - [x] **AUTH6** Scripted PyMongo/mongosh acceptance on both supported MariaDB
+    series: default negotiation, failed login, anonymous commands, privilege isolation,
+    SQL grants, cursor isolation, revocation, SQL account locking, and TLS verification.
+    Packaging installs the provisioning helper; Docker initializes root credentials.
+  - [x] **AUTH7** PR #10 review regressions: hold table metadata locks across
+    base-table validation and collection data access; classify cursor sources in
+    the registry before applying `getMore` exemptions; compare change-stream
+    namespaces byte-for-byte on existing oplogs; forward Homebrew instance
+    defaults into provisioning; bound the entire TLS handshake to 15 seconds.
+    Acceptance covers queued table/view replacement, nested writes and the SQL
+    `mongo()` caller, `$cmd.*` collection revocation, case-insensitive oplog
+    collations, provisioning overrides, and slow TLS clients. Repair the CLI
+    readiness fixtures for the authentication-setting query as part of this group.
+    Verified on 10.11.18 and 11.8.8: 125 unit cases and nine differential specs
+    per version, existing demos/rollback/pruning/gateway regressions, and plaintext
+    plus TLS driver acceptance. Slow/idle handshakes close at 15 seconds while
+    established TLS connections remain usable. Server-free checks pass 24 CLI,
+    nine provisioning, 18 Homebrew packaging and nine Homebrew service cases.
+  - [x] **AUTH8** Follow-up PR #10 review and Homebrew CI: parse aggregate
+    pipelines once for authorization and execution; reject document pipelines
+    and noncanonical BSON array keys before collection access. Check CREATE
+    permission inside the actual collection-creation branch, including implicit
+    creation by writes and index commands. Generate 28-byte SCRAM-SHA-256 salts
+    for MongoDB C driver compatibility and use the same length for unknown-user
+    challenges. Enroll the Homebrew lifecycle account through the installed
+    wrapper, authenticate its probes, and retain the credential across reinstall.
+    Verified on 10.11.18 and 11.8.8: 130 unit cases and nine differential specs
+    per version, all existing demos/regressions, and plaintext plus TLS driver
+    acceptance. Raw-wire aggregate tests reject reordered, missing and duplicate
+    indexes while the protected table is locked; creation tests reject a missing
+    table before any DDL even after an earlier successful existence probe.
+    Server-free checks pass 24 CLI, ten provisioning, 19 Homebrew packaging and
+    nine Homebrew service cases. Clean install/reinstall is gated by package CI.
+  - [x] **AUTH9** Close the database-level variant of the creation race: the
+    collection adapter never creates user schemas with the engine identity.
+    Prepare missing schemas in a fresh session bound to the caller's native
+    account and role, preserving any transaction on the SQL gateway session.
+    A database dropped after preparation makes table creation fail rather than
+    recreating the database. Existing schemas still accept table-only CREATE.
+    Verified on 10.11.18 and 11.8.8: 131 unit cases and nine differential specs
+    per version, all existing demos/regressions, and plaintext plus TLS driver
+    acceptance. A deterministic regression pauses collection bootstrap, drops
+    the schema through a limited SQL account, and verifies it stays absent.
+    Controls cover missing-schema denial, authorized schema creation, and a
+    pending SQL write that remains uncommitted and rolls back after creation.
+  Separate follow-up: local SQL-service handles do not report a server
+  version, so `mysql_set_character_set()` skips `SET NAMES`. On 10.11 the native
+  THD can remain latin1, and non-ASCII namespace literals fail to match UTF-8
+  metadata. Reproduced through the restricted SQL gateway as well as collection
+  lookup, independently of the new metadata locks. Fix client/server charset
+  agreement while preserving the charset of a borrowed SQL `mongo()` caller;
+  add non-ASCII namespace round-trip coverage on both versions.
+  Verification (2026-10-28): native 10.11.18 and 11.8.8 pass 124 unit tests,
+  all existing feature demos/regressions and nine differential specs each, plus
+  PyMongo 4.19.0 / mongosh 2.5.8 authentication, TLS, grant/credential revocation,
+  authenticated streams, oplog isolation and session-change acceptance. Failure
+  envelopes match a black-box mongod 8.0.12. Debian 12 arm64 packages also build
+  against MariaDB 11.8.9 and pass installation/removal and Docker persistence
+  acceptance. The Homebrew recipe/helper is updated; clean Homebrew installation
+  has not been rerun for this change.
+  Implementation and operator contract: [chimera/README.md](chimera/README.md#mongo-authentication-and-tls).
+  Crypto/protocol sources: RFC 5802, RFC 7677 and the public MongoDB driver auth
+  and handshake specifications; no MongoDB source was read or copied.
 - **Spun out as projects**, each blocked on its own decision rather than on engineering:
   vector search [#2](https://github.com/mieweb/chimeraDB/issues/2), `chimerash`
   [#3](https://github.com/mieweb/chimeraDB/issues/3), `eager` projection automation

@@ -78,13 +78,26 @@ void Collection::require_exists() const {
   if (!exists()) throw namespace_not_found("ns not found: " + ns_.text());
 }
 
-void Collection::create(bool error_if_exists) {
+std::unique_ptr<SqlSession::TableLock> Collection::lock_data(bool writing) const {
+  auto lock = sql_.lock_table(ns_.db, ns_.collection, writing);
+  // The command's earlier authorization check cannot protect this later SQL
+  // statement from a concurrent RENAME/CREATE VIEW. Check again with the name
+  // locked and retain that lock through every privileged data access below.
+  const auto type = sql_.query(
+      "SELECT TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA=" +
+      sql_.quote(ns_.db) + " AND TABLE_NAME=" + sql_.quote(ns_.collection));
+  if (!type.rows.empty() && type.rows[0][0] && *type.rows[0][0] != "BASE TABLE")
+    throw unauthorized("Use the SQL gateway to access views");
+  return lock;
+}
+
+void Collection::create(bool error_if_exists, const std::function<void()>& prepare_create) {
   if (exists()) {
     if (error_if_exists) throw namespace_exists("collection already exists: " + ns_.text());
     return;
   }
+  prepare_create();
   bootstrap(sql_);
-  sql_.exec("CREATE DATABASE IF NOT EXISTS " + quote_identifier(ns_.db));
   // VARBINARY over VARCHAR because an _id key is bytes, not text: ObjectIds are
   // raw and a collation must never fold two distinct ids together.
   sql_.exec("CREATE TABLE IF NOT EXISTS " + ns_.table() +
@@ -111,6 +124,7 @@ std::string Collection::where(const bson_t* filter) const {
 }
 
 Value Collection::insert(const bson_t* document) {
+  auto table_lock = lock_data(true);
   // Mongo assigns an _id when the client does not, and it leads the document.
   Bson stored;
   auto existing = path_get(document, {"_id"});
@@ -132,6 +146,7 @@ Value Collection::insert(const bson_t* document) {
 }
 
 std::vector<Bson> Collection::load(const bson_t* filter) const {
+  auto table_lock = lock_data();
   require_exists();
   ResultSet rows = sql_.query("SELECT doc FROM " + ns_.table() + " WHERE " + where(filter));
   std::vector<Bson> documents;
@@ -144,6 +159,7 @@ std::vector<Bson> Collection::load(const bson_t* filter) const {
 }
 
 uint64_t Collection::count(const bson_t* filter) const {
+  auto table_lock = lock_data();
   if (!exists()) return 0;  // counting a missing collection is 0, not an error
   ResultSet rows = sql_.query("SELECT COUNT(*) FROM " + ns_.table() + " WHERE " + where(filter));
   if (rows.rows.empty() || !rows.rows[0][0]) return 0;
@@ -159,6 +175,7 @@ void Collection::replace_document(const std::string& encoded_id, const bson_t* d
 
 UpdateOutcome Collection::update(const bson_t* filter, const bson_t* update, bool multi,
                                  bool upsert) {
+  auto table_lock = lock_data(true);
   require_exists();
   UpdateOutcome outcome;
 
@@ -194,6 +211,7 @@ UpdateOutcome Collection::update(const bson_t* filter, const bson_t* update, boo
 }
 
 uint64_t Collection::remove(const bson_t* filter, bool just_one) {
+  auto table_lock = lock_data(true);
   require_exists();
   if (!just_one) {
     sql_.exec("DELETE FROM " + ns_.table() + " WHERE " + where(filter));

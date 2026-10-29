@@ -18,7 +18,7 @@ ARG SOURCE_DATE_EPOCH=1786320000
 ARG JOBS=4
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential debhelper dpkg-dev cmake ninja-build pkg-config \
-      libbson-dev doctest-dev && \
+      libbson-dev doctest-dev libssl-dev && \
     apt-get build-dep -y mariadb-server && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /work

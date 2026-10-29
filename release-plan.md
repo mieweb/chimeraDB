@@ -399,7 +399,8 @@ availability and full-server-build cost assumptions.
   server restart after ordinary package removal leaves a conffile but removes
   the module. All four lifecycle tests assert loopback and successful restart
   after removal. Package descriptions and install documentation state that the
-  Mongo listener has no authentication ([#5](https://github.com/mieweb/chimeraDB/issues/5)).
+  Mongo listener requires SCRAM-SHA-256 authentication; see
+  [provisioning and TLS](chimera/README.md#mongo-authentication-and-tls).
 - [x] **M9.2.4** Maintainer scripts print setup/removal instructions and never
   connect to the database or run SQL. `chimeradb setup` loads `catalog.sql` and
   creates `mongo()`; repeated setup passes in all four package tests.
@@ -609,7 +610,7 @@ succeeded. Tag-driven publication remains a separate gate.
   either works verbatim or has been removed. `dnf` is removed unless someone builds it.
 - [ ] Artifacts are produced by CI from a tag, not by a human.
 - [x] Native-package Mongo listeners and Docker host port publications are loopback-bound in
-  every shipped default until authentication exists
+  every shipped default alongside SCRAM authentication
   ([#5](https://github.com/mieweb/chimeraDB/issues/5)); container binds are the explicit
   exception described in the delivery priorities above. Verified in all four Linux
   package/image combinations and both clean CI Homebrew installations.

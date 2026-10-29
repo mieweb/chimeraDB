@@ -20,6 +20,18 @@ static unsigned long long chimera_mongo_oplog_max_rows_value = 0;
 static unsigned long long chimera_mongo_oplog_max_age_value = 0;
 static char chimera_mongo_sql_writes_value = 0;
 static char chimera_mongo_insecure_bind_value = 0;
+static char chimera_mongo_auth_value = 1;
+static char *chimera_mongo_tls_cert_value = nullptr;
+static char *chimera_mongo_tls_key_value = nullptr;
+static MYSQL_SYSVAR_BOOL(auth, chimera_mongo_auth_value, PLUGIN_VAR_READONLY,
+                         "Require SCRAM-SHA-256 authentication (default ON)", nullptr, nullptr, 1);
+static MYSQL_SYSVAR_STR(tls_cert, chimera_mongo_tls_cert_value,
+                        PLUGIN_VAR_READONLY | PLUGIN_VAR_MEMALLOC,
+                        "PEM server certificate chain; when set every Mongo connection requires TLS",
+                        nullptr, nullptr, nullptr);
+static MYSQL_SYSVAR_STR(tls_key, chimera_mongo_tls_key_value,
+                        PLUGIN_VAR_READONLY | PLUGIN_VAR_MEMALLOC,
+                        "PEM private key for the Mongo TLS certificate", nullptr, nullptr, nullptr);
 // A daemon plugin is a singleton, so file scope holds these as well as the
 // plugin handle would — and without <sql_plugin.h>, which is server-internal and
 // not shipped in any -dev package (D11).
@@ -33,12 +45,10 @@ static MYSQL_SYSVAR_STR(bind, chimera_mongo_bind_value,
                         "IPv4 address the MongoDB wire listener binds to",
                         nullptr, nullptr, "127.0.0.1");
 
-// A control the operator must defeat on purpose, not a default they can
-// silently override: without this, a non-loopback bind refuses to start,
-// because the listener authenticates nobody (issue #5, stage 1).
+// Explicit opt-in for remote deployments missing authentication or TLS.
 static MYSQL_SYSVAR_BOOL(insecure_bind, chimera_mongo_insecure_bind_value,
                          PLUGIN_VAR_READONLY,
-                         "Allow the unauthenticated MongoDB listener to bind a non-loopback address",
+                         "Allow a non-loopback Mongo listener without authentication or TLS",
                          nullptr, nullptr, 0);
 
 // run-server.sh always passes the port explicitly, because the two server
@@ -66,9 +76,7 @@ static MYSQL_SYSVAR_ULONGLONG(oplog_max_age_seconds, chimera_mongo_oplog_max_age
                               "the newest entry is always retained)",
                               nullptr, nullptr, 86400, 0, ~0ULL, 1);
 
-// The SQL gateway lets a mongo client run SQL. Off for writes by default: a
-// mongo connection is not authenticated yet (M3.4), so anything it can reach
-// should be something it could already have read through a collection.
+// SQL gateway writes remain an opt-in, in addition to native SQL privileges.
 static MYSQL_SYSVAR_BOOL(sql_writes, chimera_mongo_sql_writes_value, 0,
                          "Allow chimeraSql and the $sql stage to run statements that write",
                          nullptr, nullptr, 0);
@@ -76,6 +84,9 @@ static MYSQL_SYSVAR_BOOL(sql_writes, chimera_mongo_sql_writes_value, 0,
 static struct st_mysql_sys_var *chimera_mongo_system_variables[] = {
   MYSQL_SYSVAR(bind),
   MYSQL_SYSVAR(insecure_bind),
+  MYSQL_SYSVAR(auth),
+  MYSQL_SYSVAR(tls_cert),
+  MYSQL_SYSVAR(tls_key),
   MYSQL_SYSVAR(port),
   MYSQL_SYSVAR(oplog_max_rows),
   MYSQL_SYSVAR(oplog_max_age_seconds),
@@ -88,32 +99,29 @@ static int chimera_mongo_init(void *)
   const char *bind_address =
       chimera_mongo_bind_value ? chimera_mongo_bind_value : "127.0.0.1";
   const bool exposed = !chimera::is_loopback_address(bind_address);
-  if (exposed)
-  {
-    if (!chimera_mongo_insecure_bind_value)
-    {
-      fprintf(stderr,
-              "chimera_mongo: refusing to start: chimera_mongo_bind=%s is not a "
-              "loopback address and the listener has no authentication "
-              "(https://github.com/mieweb/chimeraDB/issues/5). Set "
-              "chimera_mongo_insecure_bind=ON only if every host that can reach "
-              "the port is trusted with every document.\n",
-              bind_address);
+  const bool auth = chimera_mongo_auth_value != 0;
+  const std::string cert = chimera_mongo_tls_cert_value ? chimera_mongo_tls_cert_value : "";
+  const std::string key = chimera_mongo_tls_key_value ? chimera_mongo_tls_key_value : "";
+  if (cert.empty() != key.empty()) {
+    fprintf(stderr, "chimera_mongo: tls_cert and tls_key must both be set\n");
+    return 1;
+  }
+  if (exposed && (!auth || cert.empty())) {
+    if (!chimera_mongo_insecure_bind_value) {
+      fprintf(stderr, "chimera_mongo: refusing non-loopback bind without authentication and TLS; "
+                      "chimera_mongo_insecure_bind=ON explicitly overrides this requirement\n");
       return 1;
     }
-    fprintf(stderr,
-            "chimera_mongo: WARNING: chimera_mongo_insecure_bind=ON — serving %s "
-            "WITHOUT AUTHENTICATION; anyone who can reach the port can read and "
-            "write every collection. chimeraSql and $sql are disabled on this "
-            "bind.\n",
-            bind_address);
+    fprintf(stderr, "chimera_mongo: WARNING: insecure non-loopback bind: authentication=%s TLS=%s\n",
+            auth ? "ON" : "OFF", cert.empty() ? "OFF" : "ON");
   }
-
+  if (!auth)
+    fprintf(stderr, "chimera_mongo: WARNING: WITHOUT AUTHENTICATION; anyone reaching the Mongo port "
+                    "can read and write every collection\n");
   chimera::set_sql_gateway_write_flag(&chimera_mongo_sql_writes_value);
-  chimera::set_sql_gateway_network_exposed(exposed);
-
+  chimera::set_sql_gateway_network_exposed(exposed && !auth);
   auto listener = std::make_unique<chimera::Listener>(
-      bind_address, static_cast<uint16_t>(chimera_mongo_port_value));
+      bind_address, static_cast<uint16_t>(chimera_mongo_port_value), auth, cert, key);
 
   std::string error;
   if (!listener->start(&error))

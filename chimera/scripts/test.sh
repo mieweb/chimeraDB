@@ -23,7 +23,7 @@ note "=== building the Mongo head for $SERVER_VERSION ==="
 # Restart so the tests exercise the plugin that was just built, not whatever
 # happened to be loaded before.
 "$CHIMERA_DIR/scripts/stop-server.sh" --server "$SERVER_VERSION" >/dev/null
-"$CHIMERA_DIR/scripts/run-server.sh" --server "$SERVER_VERSION" >/dev/null
+"$CHIMERA_DIR/scripts/run-server.sh" --server "$SERVER_VERSION" --no-auth >/dev/null
 
 note "=== SQL layer on $SERVER_VERSION ==="
 chimera_require_running
@@ -52,5 +52,8 @@ note "=== cross-language gateways on $SERVER_VERSION ==="
 # two transcripts must be identical.
 note "=== differential vs MongoDB on $SERVER_VERSION ==="
 "$CHIMERA_DIR/tests/differential/run.sh" --server "$SERVER_VERSION"
+
+note "=== authenticated drivers and TLS on $SERVER_VERSION ==="
+"$CHIMERA_DIR/scripts/test-mongo-auth.sh" --server "$SERVER_VERSION"
 
 note "all layers green on $SERVER_VERSION"

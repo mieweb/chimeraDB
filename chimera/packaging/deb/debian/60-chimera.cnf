@@ -1,7 +1,9 @@
 [mariadb]
 plugin-maturity=experimental
 plugin-load-add=chimera_mongo
-# There is no Mongo authentication yet. Keep this listener local.
+# SCRAM is required. Provision users with chimeradb-mongo-user.
+loose-chimera-mongo-auth=ON
+# Keep the default listener local; remote bindings also require TLS.
 # loose- lets MariaDB continue to start after the plugin package is removed
 # but this administrator-owned conffile remains until apt purge.
 loose-chimera-mongo-port=27017

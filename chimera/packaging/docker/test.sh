@@ -13,6 +13,7 @@ volume="$name-data"
 network="$name-net"
 runner=chimeradb-smoke:bookworm
 export MARIADB_ROOT_PASSWORD="release-smoke-$name"$'\'\\\nedge'
+export MONGO_INITDB_ROOT_PASSWORD="mongo-release-smoke-$name"
 cleanup() {
   docker rm -f "$name" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
@@ -24,7 +25,7 @@ docker network create "$network" >/dev/null
 docker volume create "$volume" >/dev/null
 start() {
   docker run -d --platform "linux/$architecture" --name "$name" --network "$network" --network-alias db \
-    -e MARIADB_ROOT_PASSWORD -v "$volume:/var/lib/mysql" \
+    -e MARIADB_ROOT_PASSWORD -e MONGO_INITDB_ROOT_PASSWORD -v "$volume:/var/lib/mysql" \
     -p 127.0.0.1::3306 -p 127.0.0.1::27017 "$image" >/dev/null
   for ((attempt=0; attempt<180; attempt++)); do
     state=$(docker inspect --format '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$name")
@@ -62,15 +63,21 @@ if docker exec -e CHIMERA_MONGO_HOST=127.0.0.1 -e CHIMERA_MONGO_PORT=1 "$name" s
 fi
 docker exec "$name" sh -c "$healthcheck"
 printf 'PASS: image health requires a live Mongo ping while the SQL plugin is ACTIVE\n'
+# Exercise the installed provisioning helper and a least-privilege identity.
+docker exec "$name" mariadb --no-defaults --protocol=socket --socket=/run/mysqld/mysqld.sock --user=root \
+  -e "CREATE USER 'smoke_reader'@'localhost' IDENTIFIED BY 'unused-sql-test-password'; GRANT SELECT ON chimera_release_smoke.* TO 'smoke_reader'@'localhost'"
+printf '%s\n' smoke-mongo-reader | docker exec -i "$name" chimeradb-mongo-user \
+  --user smoke_reader --password-stdin -- --no-defaults --protocol=socket --socket=/run/mysqld/mysqld.sock --user=root
+
 docker port "$name" 3306/tcp | grep -q '^127\.0\.0\.1:'
 docker port "$name" 27017/tcp | grep -q '^127\.0\.0\.1:'
-docker run --rm --network "$network" -e MARIADB_ROOT_PASSWORD "$runner"
+docker run --rm --network "$network" -e MARIADB_ROOT_PASSWORD -e MONGO_INITDB_ROOT_PASSWORD "$runner"
 docker stop --time 60 "$name" >/dev/null
 [[ $(docker inspect --format '{{.State.ExitCode}}' "$name") == 0 ]]
 docker rm "$name" >/dev/null
 # A fresh container sees the same volume and must not initialize it again.
 start
-docker run --rm --network "$network" -e MARIADB_ROOT_PASSWORD "$runner" --verify-persistence
+docker run --rm --network "$network" -e MARIADB_ROOT_PASSWORD -e MONGO_INITDB_ROOT_PASSWORD "$runner" --verify-persistence
 docker stop --time 60 "$name" >/dev/null
 [[ $(docker inspect --format '{{.State.ExitCode}}' "$name") == 0 ]]
 printf 'PASS: %s, host loopback publishing, graceful stop and volume persistence\n' "$image"

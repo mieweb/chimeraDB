@@ -74,7 +74,7 @@ start_private() {
   local plugin_args=()
   if [[ $mode == plugin ]]; then
     plugin_args=(--plugin-maturity=experimental --plugin-load-add=chimera_mongo
-      --chimera-mongo-port="$MONGO_PORT" --chimera-mongo-bind=127.0.0.1
+      --chimera-mongo-port="$MONGO_PORT" --chimera-mongo-bind=127.0.0.1 --chimera-mongo-auth=OFF
       --chimera-mongo-oplog-max-rows=0 --chimera-mongo-oplog-max-age-seconds=0)
   fi
   "$MARIADBD" --no-defaults --basedir="$SERVER_DIST" --datadir="$DATADIR" \

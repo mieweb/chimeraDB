@@ -9,6 +9,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -92,6 +93,88 @@ if event["command"] == "build.sh":
     (prefix / "staged-version").write_text(version)
 with open(os.environ["MOCK_STAGE_CALLS"], "a") as output:
     output.write(json.dumps(event) + "\n")
+'''
+
+
+LIFECYCLE_STEP = r'''
+import json
+import os
+from pathlib import Path
+import sys
+from urllib.parse import urlsplit
+
+root = Path(os.environ["MOCK_LIFECYCLE_ROOT"])
+prefix = root / "chimeradb"
+data = root / "var" / os.environ["MOCK_FORMULA"]
+running = root / "running"
+args = sys.argv[1:]
+name = Path(sys.argv[0]).name
+
+def event(action):
+    with open(root / "events.jsonl", "a") as output:
+        output.write(json.dumps(action) + "\n")
+
+if name == "brew":
+    if args == ["--prefix"]:
+        print(root)
+    elif args[:1] == ["--prefix"]:
+        print(root / "mariadb" if args[1].startswith("mariadb@") else prefix)
+    elif args[:2] == ["services", "run"]:
+        data.mkdir(parents=True, exist_ok=True)
+        running.touch()
+        event("start")
+    elif args[:2] == ["services", "stop"]:
+        running.unlink()
+        event("stop")
+    elif args[:1] == ["reinstall"]:
+        assert not running.exists()
+        event("reinstall")
+    elif args[:2] == ["test", "--force"]:
+        event("formula-test")
+    else:
+        sys.exit("unexpected brew arguments: " + repr(args))
+elif name == "chimeradb-service":
+    marker = prefix / "share/chimeradb/mariadb-prefix"
+    assert marker.read_text().endswith("-stale-revision\n")
+    sys.exit("plugin was built for MariaDB keg stale-revision")
+elif name == "chimeradb":
+    assert args[0] == "status"
+    sys.exit(0 if running.exists() else 1)
+elif name == "mariadb":
+    assert args[0] == "--defaults-file=" + str(root / "etc" / (os.environ["MOCK_FORMULA"] + ".cnf"))
+    assert "--protocol=socket" in args
+    assert "--user=" + os.environ["MOCK_SQL_USER"] in args
+    if not running.exists():
+        sys.exit(1)
+    if "-e" in args:
+        statement = args[args.index("-e") + 1]
+        assert statement == "SELECT COUNT(*) FROM package_smoke.wire_docs"
+        assert (data / "wire-document").exists()
+        print("1")
+    else:
+        statement = sys.stdin.read()
+        if statement.startswith("SELECT COUNT(*) FROM mysql.global_priv"):
+            print("1")
+        else:
+            assert "REPLACE INTO chimera_auth.credentials" in statement
+            (data / "credential").touch()
+            event("provision")
+elif name == "chimeradb-wire-smoke":
+    assert running.exists()
+    uri = urlsplit(args[0])
+    assert uri.username == os.environ["MOCK_SQL_USER"], "Mongo probe must authenticate"
+    assert uri.password == "brew-lifecycle-test-password", "wrong Mongo password"
+    assert "authSource=admin" in uri.query
+    assert (data / "credential").exists(), "provision before probing authenticated data access"
+    if args[1:] == ["--ping-only"]:
+        assert (data / "wire-document").exists()
+        event("authenticated-restart-ping")
+    else:
+        assert len(args) == 1
+        (data / "wire-document").touch()
+        event("authenticated-insert")
+else:
+    sys.exit("unexpected lifecycle command: " + name)
 '''
 
 
@@ -279,6 +362,48 @@ class FormulaArchiveTest(PackagingFixture):
             with self.subTest(name=name, version=version):
                 archive = self.archive([(name, version, tarfile.REGTYPE)])
                 self.assert_rejected(self.render(archive), message)
+
+
+class LifecycleAuthenticationTest(unittest.TestCase):
+    def test_launchd_reinstall_authentication_uses_installed_provisioner_and_persists(self):
+        for server, formula in (("10.11", "chimeradb@10.11"), ("11.8", "chimeradb")):
+            with self.subTest(server=server), tempfile.TemporaryDirectory(prefix="chimera lifecycle ") as temporary:
+                root = Path(temporary)
+                prefix = root / "chimeradb"
+                scripts = (root / "bin", root / "mariadb/bin", prefix / "bin", prefix / "libexec")
+                for directory in scripts:
+                    directory.mkdir(parents=True, exist_ok=True)
+                for command in (root / "bin/brew", root / "mariadb/bin/mariadb",
+                                prefix / "bin/chimeradb", prefix / "libexec/chimeradb-service",
+                                prefix / "libexec/chimeradb-wire-smoke"):
+                    command.write_text("#!" + sys.executable + "\n" + LIFECYCLE_STEP)
+                    command.chmod(0o755)
+                config = root / "etc" / (formula + ".cnf")
+                config.parent.mkdir()
+                config.write_text("[client]\nsocket=dedicated.sock\n[mysqld]\nport=3306\nchimera-mongo-port=27017\n")
+                metadata = prefix / "share/chimeradb"
+                (metadata / "sql").mkdir(parents=True)
+                (metadata / "mariadb-prefix").write_text(str(root / "mariadb") + "\n")
+                shutil.copyfile(HERE.parents[1] / "sql/auth.sql", metadata / "sql/auth.sql")
+                helper = prefix / "libexec/chimeradb-mongo-user"
+                shutil.copyfile(HERE.parents[1] / "scripts/mongo-auth.py", helper)
+                # Match the installed formula wrapper, including its dedicated
+                # defaults. Run the real helper against the fake SQL client.
+                wrapper = prefix / "bin/chimeradb-mongo-user"
+                wrapper.write_text("#!/bin/sh\nexport CHIMERA_DEFAULTS_FILE=" + shlex.quote(str(config)) +
+                                   "\nexport PATH=" + shlex.quote(str(root / "mariadb/bin")) + ":\"$PATH\"\nexec " +
+                                   shlex.quote(sys.executable) + " " + shlex.quote(str(helper)) + ' "$@"\n')
+                wrapper.chmod(0o755)
+                env = dict(os.environ, PATH=str(root / "bin") + os.pathsep + os.environ["PATH"],
+                           GITHUB_ACTIONS="true", RUNNER_OS="macOS", MOCK_LIFECYCLE_ROOT=str(root),
+                           MOCK_FORMULA=formula,
+                           MOCK_SQL_USER=subprocess.check_output(["id", "-un"], text=True).strip())
+                result = subprocess.run(["bash", str(HERE / "ci-lifecycle.sh"), "--server", server],
+                                        env=env, capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                events = list(map(json.loads, (root / "events.jsonl").read_text().splitlines()))
+                self.assertEqual(events, ["start", "provision", "authenticated-insert", "stop", "reinstall",
+                                          "formula-test", "start", "authenticated-restart-ping", "stop"])
 
 
 class StageCacheTest(PackagingFixture):

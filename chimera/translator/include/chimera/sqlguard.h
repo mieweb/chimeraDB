@@ -21,8 +21,8 @@ bool is_read_only_statement(std::string_view statement);
 
 // True only for an IPv4 loopback address (all of 127.0.0.0/8); anything that
 // does not parse as IPv4 is not loopback. The plugin refuses to start a
-// non-loopback listener without an explicit opt-in — the wire has no
-// authentication yet (issue #5) — and, like the statement checks above, the
+// non-loopback listener without authentication and TLS or an explicit opt-in.
+// Like the statement checks above, the
 // predicate lives here so a security control is unit-testable without a server.
 bool is_loopback_address(std::string_view address);
 

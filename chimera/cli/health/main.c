@@ -1,6 +1,7 @@
 /* Bounded Mongo ping for package readiness. Uses the plugin's existing BSON
  * dependency, with no driver, interpreter or database process dependency. */
 #include <bson/bson.h>
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -13,6 +14,8 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#include <openssl/ssl.h>
+#include <openssl/x509v3.h>
 
 enum { REQUEST_ID = 424242, OP_MSG = 2013, TIMEOUT_MS = 2000, MAX_REPLY = 65536 };
 
@@ -51,10 +54,23 @@ static int wait_socket(int fd, short events, int64_t deadline) {
   }
 }
 
+static SSL *tls = NULL;
+
 static int transfer(int fd, uint8_t *data, size_t length, int writing, int64_t deadline) {
   while (length) {
-    if (!wait_socket(fd, writing ? POLLOUT : POLLIN, deadline)) return 0;
-    ssize_t count = writing ? send(fd, data, length, 0) : recv(fd, data, length, 0);
+    ssize_t count;
+    if (tls) {
+      count = writing ? SSL_write(tls, data, (int)length) : SSL_read(tls, data, (int)length);
+      if (count <= 0) {
+        const int error = SSL_get_error(tls, (int)count);
+        if ((error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) &&
+            wait_socket(fd, error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT, deadline)) continue;
+        return 0;
+      }
+    } else {
+      if (!wait_socket(fd, writing ? POLLOUT : POLLIN, deadline)) return 0;
+      count = writing ? send(fd, data, length, 0) : recv(fd, data, length, 0);
+    }
     if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
     if (count <= 0) return 0;
     data += count;
@@ -130,6 +146,40 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  SSL_CTX *tls_context = NULL;
+  const char *ca = getenv("CHIMERA_MONGO_TLS_CA");
+  const char *tls_mode = getenv("CHIMERA_MONGO_TLS");
+  if ((ca && *ca) || (tls_mode && strcmp(tls_mode, "ON") == 0)) {
+    tls_context = SSL_CTX_new(TLS_client_method());
+    if (!tls_context) { close(fd); return 1; }
+    SSL_CTX_set_verify(tls_context, SSL_VERIFY_PEER, NULL);
+    if (SSL_CTX_set_min_proto_version(tls_context, TLS1_2_VERSION) != 1 ||
+        ((ca && *ca) ? SSL_CTX_load_verify_locations(tls_context, ca, NULL) :
+                     SSL_CTX_set_default_verify_paths(tls_context)) != 1) {
+      SSL_CTX_free(tls_context); close(fd); return 1;
+    }
+    tls = SSL_new(tls_context);
+    const char *name = getenv("CHIMERA_MONGO_TLS_SERVER_NAME");
+    if (!name || !*name) name = argv[1];
+    unsigned char address_bytes[16];
+    const int ip_name = inet_pton(AF_INET, name, address_bytes) == 1 ||
+                        inet_pton(AF_INET6, name, address_bytes) == 1;
+    if (!tls || SSL_set_fd(tls, fd) != 1 ||
+        SSL_set_tlsext_host_name(tls, name) != 1 ||
+        (ip_name ? X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(tls), name) :
+                   SSL_set1_host(tls, name)) != 1) {
+      SSL_free(tls); SSL_CTX_free(tls_context); close(fd); return 1;
+    }
+    for (;;) {
+      const int connected = SSL_connect(tls);
+      if (connected == 1) break;
+      const int error = SSL_get_error(tls, connected);
+      if ((error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) &&
+          wait_socket(fd, error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT, deadline)) continue;
+      fprintf(stderr, "Mongo TLS handshake or certificate verification failed\n");
+      SSL_free(tls); SSL_CTX_free(tls_context); close(fd); return 1;
+    }
+  }
   int result = 1;
   uint8_t *body = NULL;
   bson_t ping;
@@ -164,6 +214,8 @@ done:
   if (result) fprintf(stderr, "Mongo endpoint did not return a valid successful ping\n");
   free(body);
   bson_destroy(&ping);
+  SSL_free(tls);
+  SSL_CTX_free(tls_context);
   close(fd);
   return result;
 }

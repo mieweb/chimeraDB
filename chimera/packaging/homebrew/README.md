@@ -14,6 +14,13 @@ ports are already occupied. Never start both services on the same ports.
 The service initializes its dedicated `var/chimeradb` (or `var/chimeradb@10.11`)
 directory. Keep `datadir` at that generated path; changing only the config cannot
 relocate initialization. Ports and listener settings can be customized.
+The installed `chimeradb-mongo-user` helper reads this formula's dedicated config
+by default, so provisioning targets its SQL socket. Connection options after `--`,
+such as `--socket=/other/mysql.sock`, override config values. An explicit
+`--defaults-file=/path/my.cnf` or `--defaults-extra-file=/path/extra.cnf` replaces
+the formula's default config selection; `--no-defaults` disables config files.
+`--no-defaults` cannot be combined with either file option. The helper places these
+options first for the MariaDB client and preserves paths containing spaces.
 An interrupted first initialization leaves `.chimera-initializing` in that
 directory, and subsequent starts refuse to use the incomplete database. Preserve
 the directory for inspection, then restore a known-good backup or move it aside
