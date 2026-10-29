@@ -111,6 +111,10 @@ twice, applies RFC 4013 SASLprep, and stores only a random salt, iteration count
 StoredKey and ServerKey in private `chimera_auth.credentials`. No password is passed
 in argv or sent to MariaDB. The default PBKDF2 iteration count is 15,000; the helper
 accepts `--iterations` from 4,096 to 1,000,000.
+New credentials use 28-byte salts for MongoDB C driver compatibility. Credentials
+provisioned by the earlier 16-byte-salt helper must be reprovisioned with their
+Mongo password before use with that driver; the verifier cannot be converted
+without the password.
 
 ```sh
 # Debian / Homebrew installed helper:

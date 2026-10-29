@@ -91,11 +91,12 @@ std::unique_ptr<SqlSession::TableLock> Collection::lock_data(bool writing) const
   return lock;
 }
 
-void Collection::create(bool error_if_exists) {
+void Collection::create(bool error_if_exists, const std::function<void()>& authorize_create) {
   if (exists()) {
     if (error_if_exists) throw namespace_exists("collection already exists: " + ns_.text());
     return;
   }
+  authorize_create();
   bootstrap(sql_);
   sql_.exec("CREATE DATABASE IF NOT EXISTS " + quote_identifier(ns_.db));
   // VARBINARY over VARCHAR because an _id key is bytes, not text: ObjectIds are

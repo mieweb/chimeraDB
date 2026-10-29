@@ -3,6 +3,8 @@
 import sys
 sys.dont_write_bytecode = True
 import importlib.util
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -88,6 +90,19 @@ if statement.startswith('SELECT COUNT(*) FROM mysql.global_priv'):
         result = self.invoke(self.connection)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assert_calls(self.connection)
+
+    def test_provisioned_verifier_uses_mongo_c_driver_salt_format(self):
+        result = self.invoke(self.connection)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = list(map(json.loads, self.calls.read_text().splitlines()))
+        values = calls[-1]['sql'].rsplit(' VALUES (', 1)[1].removesuffix(');').split(',')
+        salt = bytes.fromhex(values[3][2:-1])
+        self.assertEqual(len(salt), 28, 'libmongoc requires a 28-byte SCRAM-SHA-256 salt')
+        salted = hashlib.pbkdf2_hmac('sha256', b'Mongo secret', salt, int(values[4]))
+        self.assertEqual(bytes.fromhex(values[5][2:-1]),
+                         hashlib.sha256(hmac.digest(salted, b'Client Key', 'sha256')).digest())
+        self.assertEqual(bytes.fromhex(values[6][2:-1]),
+                         hmac.digest(salted, b'Server Key', 'sha256'))
 
     def test_explicit_defaults_replace_formula_default_in_equals_and_split_forms(self):
         for option in ('--defaults-file', '--defaults-extra-file'):

@@ -132,7 +132,9 @@ def main():
         password = getpass.getpass('Mongo password: ')
         if password != getpass.getpass('Confirm Mongo password: '):
             raise ValueError('passwords do not match')
-    salt = os.urandom(16)
+    # MongoDB's SCRAM-SHA-256 clients include libmongoc, which requires the
+    # server's 28-byte salt format rather than accepting arbitrary SCRAM salts.
+    salt = os.urandom(28)
     salted = hashlib.pbkdf2_hmac('sha256', saslprep(password), salt, args.iterations)
     client_key = hmac.digest(salted, b'Client Key', 'sha256')
     stored_key = hashlib.sha256(client_key).digest()

@@ -104,7 +104,7 @@ Bson Authentication::start(const bson_t* body, const std::string& db, SqlSession
       credential_.user = user; credential_.auth_db = db;
       // Stable dummy salts prevent repeated starts from identifying unknown
       // users by a changing salt. The process secret never leaves this module.
-      credential_.salt = dummy_key(db, user, "salt").substr(0, 16);
+      credential_.salt = dummy_key(db, user, "salt").substr(0, 28);
       const std::string stored = dummy_key(db, user, "stored"), server = dummy_key(db, user, "server");
       std::copy(stored.begin(), stored.end(), credential_.stored_key.begin());
       std::copy(server.begin(), server.end(), credential_.server_key.begin());

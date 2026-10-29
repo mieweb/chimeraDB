@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -47,7 +48,9 @@ public:
   static void bootstrap(SqlSession& sql);
 
   bool exists() const;
-  void create(bool error_if_exists);
+  // The caller's CREATE check belongs in the actual missing-table branch,
+  // since a prior command-level existence check can race with SQL DROP.
+  void create(bool error_if_exists, const std::function<void()>& authorize_create);
   void drop();
 
   Value insert(const bson_t* document);

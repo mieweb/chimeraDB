@@ -117,7 +117,11 @@ stop() {
   die 'server did not stop cleanly'
 }
 start
-uri="mongodb://127.0.0.1:$mongo_port/?directConnection=true&serverSelectionTimeoutMS=5000"
+# Exercise the installed wrapper's dedicated defaults: the SQL account is
+# created by install-db, while its Mongo SCRAM credential needs enrollment.
+printf '%s\n' brew-lifecycle-test-password | "$prefix/bin/chimeradb-mongo-user" \
+  --user "$(id -un)" --password-stdin -- --protocol=socket --user="$(id -un)"
+uri="mongodb://$(id -un):brew-lifecycle-test-password@127.0.0.1:$mongo_port/?authSource=admin&directConnection=true&serverSelectionTimeoutMS=5000"
 "$prefix/libexec/chimeradb-wire-smoke" "$uri"
 [[ $(sql -e 'SELECT COUNT(*) FROM package_smoke.wire_docs') == 1 ]] || die 'launchd driver write was not visible in SQL'
 stop
@@ -126,6 +130,7 @@ brew reinstall --build-from-source "$qualified"
 [[ $(shasum -a 256 "$config" | awk '{print $1}') == "$before" ]] || die 'reinstall changed the customized config'
 brew test --force "$qualified"
 start
+# Reuse the original credential to prove enrollment survives the reinstall.
 "$prefix/libexec/chimeradb-wire-smoke" "$uri" --ping-only
 [[ $(sql -e 'SELECT COUNT(*) FROM package_smoke.wire_docs') == 1 ]] || die 'reinstall lost service data'
 stop

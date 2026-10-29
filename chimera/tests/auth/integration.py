@@ -16,6 +16,7 @@ from pymongo import MongoClient
 from pymongo.errors import OperationFailure, ServerSelectionTimeoutError
 from cursor_auth_regressions import run as run_cursor_auth_regressions
 from table_replacement_regressions import run as run_table_replacement_regressions
+from aggregate_pipeline_regressions import run as run_aggregate_pipeline_regressions
 
 port = int(os.environ['CHIMERA_AUTH_PORT'])
 options = dict(directConnection=True, serverSelectionTimeoutMS=2000, connectTimeoutMS=2000)
@@ -124,6 +125,7 @@ try:
 finally:
     sql('SET GLOBAL chimera_mongo_sql_writes=OFF')
 print('  ok  roles, table grants, implicit creation and SQL view isolation')
+run_aggregate_pipeline_regressions(port, sql, os.environ['CHIMERA_AUTH_TLS_CERT'] if tls else None)
 run_table_replacement_regressions(writer, reader, sql, rejected)
 
 

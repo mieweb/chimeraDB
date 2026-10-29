@@ -257,6 +257,13 @@ struct Ctx {
   Namespace ns() const { return parse_namespace(db, argument); }
 };
 
+void create_collection(Ctx& ctx, Collection& collection) {
+  collection.create(/*error_if_exists=*/false, [&] {
+    const auto& ns = collection.ns();
+    ctx.state.authorize(ns.db, ns.collection, SqlSession::Create);
+  });
+}
+
 // Views the named sub-document, or an empty document when the field is absent,
 // so an omitted filter/sort/projection needs no special case at every call site.
 void sub_document(const Ctx& ctx, const char* name, bson_t* out) {
@@ -562,12 +569,47 @@ Bson open_change_stream(Ctx& ctx, const std::vector<Bson>& stages) {
   return reply;
 }
 
-Bson cmd_aggregate(Ctx& ctx) {
-  bson_t pipeline;
-  sub_document(ctx, "pipeline", &pipeline);
-  std::vector<Bson> stages = pipeline_stages(&pipeline);
+enum class AggregateSource { Collection, Sql, ChangeStream };
 
-  if (!stages.empty() && stage_operator(stages.front().get()).first == "$changeStream") {
+struct AggregatePipeline {
+  std::vector<Bson> stages;
+  AggregateSource source = AggregateSource::Collection;
+};
+
+AggregatePipeline parse_aggregate_pipeline(const Ctx& ctx) {
+  AggregatePipeline parsed;
+  bson_iter_t field;
+  if (!bson_iter_init_find(&field, ctx.body, "pipeline")) return parsed;
+  if (!BSON_ITER_HOLDS_ARRAY(&field)) throw type_mismatch("aggregate.pipeline must be an array");
+
+  const uint8_t* data = nullptr;
+  uint32_t length = 0;
+  bson_iter_array(&field, &length, &data);
+  bson_t pipeline;
+  if (!bson_init_static(&pipeline, data, length)) throw failed_to_parse("invalid aggregate.pipeline array");
+  // Raw BSON can carry array keys out of order or more than once. Reject those
+  // encodings before authorization rather than choosing between key and field
+  // order when deciding whether the pipeline reads a collection.
+  bson_iter_t element;
+  if (!bson_iter_init(&element, &pipeline)) throw failed_to_parse("invalid aggregate.pipeline array");
+  size_t index = 0;
+  while (bson_iter_next(&element)) {
+    if (std::string(bson_iter_key(&element)) != std::to_string(index++))
+      throw failed_to_parse("aggregate.pipeline array keys must be consecutive and in order");
+  }
+  parsed.stages = pipeline_stages(&pipeline);
+  if (!parsed.stages.empty()) {
+    const std::string name = stage_operator(parsed.stages.front().get()).first;
+    if (name == "$sql") parsed.source = AggregateSource::Sql;
+    if (name == "$changeStream") parsed.source = AggregateSource::ChangeStream;
+  }
+  return parsed;
+}
+
+Bson cmd_aggregate(Ctx& ctx, AggregatePipeline parsed) {
+  std::vector<Bson>& stages = parsed.stages;
+
+  if (parsed.source == AggregateSource::ChangeStream) {
     return open_change_stream(ctx, stages);
   }
   for (const auto& stage : stages) {
@@ -578,7 +620,7 @@ Bson cmd_aggregate(Ctx& ctx) {
 
   std::vector<Bson> documents;
   std::string ns_text;
-  const bool sql_source = !stages.empty() && stage_operator(stages.front().get()).first == "$sql";
+  const bool sql_source = parsed.source == AggregateSource::Sql;
   if (sql_source) {
     // A `$sql` pipeline never touches a collection, so it runs against the
     // database rather than a namespace and the cursor is named accordingly.
@@ -729,7 +771,7 @@ Bson cmd_insert(Ctx& ctx) {
   const bool ordered = flag(ctx.body, "ordered", true);
 
   Collection collection(ctx.sql(), ctx.ns());
-  collection.create(/*error_if_exists=*/false);  // Mongo creates on first insert
+  create_collection(ctx, collection);  // Mongo creates on first insert
 
   Bson reply;
   Bson error_list;
@@ -769,7 +811,7 @@ Bson cmd_update(Ctx& ctx) {
   const bool ordered = flag(ctx.body, "ordered", true);
 
   Collection collection(ctx.sql(), ctx.ns());
-  collection.create(/*error_if_exists=*/false);
+  create_collection(ctx, collection);
 
   int32_t matched = 0;
   int32_t modified = 0;
@@ -900,7 +942,7 @@ Bson cmd_find_and_modify(Ctx& ctx) {
   }
 
   Collection collection(ctx.sql(), ctx.ns());
-  if (!remove) collection.create(/*error_if_exists=*/false);
+  if (!remove) create_collection(ctx, collection);
   // Removing from a nonexistent collection is a successful no-op. Its reply
   // still needs a clock; initialize it before entering the write transaction.
   if (remove) (void)current_operation_time_or_initialize(ctx.sql());
@@ -986,7 +1028,8 @@ Bson cmd_find_and_modify(Ctx& ctx) {
 Bson cmd_create(Ctx& ctx) {
   // Creating a collection that already exists is a no-op on the reference, so long
   // as the options match — and we accept no options yet.
-  Collection(ctx.sql(), ctx.ns()).create(/*error_if_exists=*/false);
+  Collection collection(ctx.sql(), ctx.ns());
+  create_collection(ctx, collection);
   return ok_reply();
 }
 
@@ -1092,7 +1135,7 @@ Bson cmd_create_indexes(Ctx& ctx) {
   }
   Collection collection(ctx.sql(), ctx.ns());
   const bool created_collection = !collection.exists();
-  collection.create(/*error_if_exists=*/false);
+  create_collection(ctx, collection);
 
   const int32_t before = static_cast<int32_t>(collection.list_indexes().size());
   for (const auto& value : array_values(indexes->get())) {
@@ -1308,17 +1351,10 @@ Bson dispatch_command(const wire::Request& req, ConnectionState& state) noexcept
         state.authorize(ns.db, ns.collection, SqlSession::Select);
     }
     if (command == "aggregate") {
-      bson_t pipeline;
-      bool sql_source = false;
-      if (view_field(req.body.get(), "pipeline", &pipeline)) {
-        bson_iter_t it;
-        if (bson_iter_init_find(&it, &pipeline, "0") && BSON_ITER_HOLDS_DOCUMENT(&it)) {
-          const uint8_t* data; uint32_t len; bson_iter_document(&it, &len, &data);
-          bson_t first; bson_init_static(&first, data, len);
-          sql_source = bson_has_field(&first, "$sql");
-        }
-      }
-      if (!sql_source) state.authorize(req.database, argument, SqlSession::Select);
+      AggregatePipeline pipeline = parse_aggregate_pipeline(ctx);
+      if (pipeline.source != AggregateSource::Sql)
+        state.authorize(req.database, argument, SqlSession::Select);
+      return cmd_aggregate(ctx, std::move(pipeline));
     }
     if (command == "insert" || command == "update" || command == "delete" ||
         command == "findAndModify" || command == "findandmodify") {
@@ -1338,18 +1374,12 @@ Bson dispatch_command(const wire::Request& req, ConnectionState& state) noexcept
       }
       if (flag(req.body.get(), "upsert")) access |= SqlSession::Insert;
       state.authorize(req.database, argument, access);
-      if (command != "delete" && !(command == "findAndModify" && flag(req.body.get(), "remove")) &&
-          !(command == "findandmodify" && flag(req.body.get(), "remove")) &&
-          !Collection(state.sql(), ctx.ns()).exists())
-        state.authorize(req.database, argument, SqlSession::Create);
     }
     if (command == "create") state.authorize(req.database, argument, SqlSession::Create);
     if (command == "drop") state.authorize(req.database, argument, SqlSession::Drop);
     if (command == "dropDatabase") state.authorize(req.database, "", SqlSession::Drop);
     if (command == "createIndexes" || command == "dropIndexes")
       state.authorize(req.database, argument, SqlSession::Alter | SqlSession::Index);
-    if (command == "createIndexes" && !Collection(state.sql(), ctx.ns()).exists())
-      state.authorize(req.database, argument, SqlSession::Create);
     // listCollections is filtered table by table; never expose internal schemas.
     if (command == "listCollections" && !state.allowed(req.database, "", SqlSession::Select)) {
       if (list_collections(state.gateway_sql(), req.database).empty())
@@ -1360,7 +1390,6 @@ Bson dispatch_command(const wire::Request& req, ConnectionState& state) noexcept
     if (command == "getMore") return cmd_get_more(ctx);
     if (command == "killCursors") return cmd_kill_cursors(ctx);
     if (command == "count") return cmd_count(ctx);
-    if (command == "aggregate") return cmd_aggregate(ctx);
     if (command == "distinct") return cmd_distinct(ctx);
     if (command == "chimeraSql") return cmd_chimera_sql(ctx);
 

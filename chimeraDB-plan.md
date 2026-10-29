@@ -696,7 +696,22 @@ Tracked independently of this order:
     plus TLS driver acceptance. Slow/idle handshakes close at 15 seconds while
     established TLS connections remain usable. Server-free checks pass 24 CLI,
     nine provisioning, 18 Homebrew packaging and nine Homebrew service cases.
-  Follow-up outside AUTH7: local SQL-service handles do not report a server
+  - [x] **AUTH8** Follow-up PR #10 review and Homebrew CI: parse aggregate
+    pipelines once for authorization and execution; reject document pipelines
+    and noncanonical BSON array keys before collection access. Check CREATE
+    permission inside the actual collection-creation branch, including implicit
+    creation by writes and index commands. Generate 28-byte SCRAM-SHA-256 salts
+    for MongoDB C driver compatibility and use the same length for unknown-user
+    challenges. Enroll the Homebrew lifecycle account through the installed
+    wrapper, authenticate its probes, and retain the credential across reinstall.
+    Verified on 10.11.18 and 11.8.8: 130 unit cases and nine differential specs
+    per version, all existing demos/regressions, and plaintext plus TLS driver
+    acceptance. Raw-wire aggregate tests reject reordered, missing and duplicate
+    indexes while the protected table is locked; creation tests reject a missing
+    table before any DDL even after an earlier successful existence probe.
+    Server-free checks pass 24 CLI, ten provisioning, 19 Homebrew packaging and
+    nine Homebrew service cases. Clean install/reinstall is gated by package CI.
+  Separate follow-up: local SQL-service handles do not report a server
   version, so `mysql_set_character_set()` skips `SET NAMES`. On 10.11 the native
   THD can remain latin1, and non-ASCII namespace literals fail to match UTF-8
   metadata. Reproduced through the restricted SQL gateway as well as collection
